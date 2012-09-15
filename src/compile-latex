@@ -1,0 +1,981 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use File::Spec;
+use File::Basename;
+use File::Find;
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
+use Cwd qw(realpath);
+use IPC::Open3;
+use POSIX ":sys_wait_h";
+use Sys::Hostname;
+use Digest::MD5;
+use Data::Dumper;
+use Clone qw(clone);
+
+my $help=0;
+my $forcenext=0;
+my $auto=1;
+my $deps=0;
+my $inBetween=' ';
+my $quiet=0;
+my $debug=1;
+my $index=0;
+my $forget=0;
+my @bibFile=();
+my @indexOptions=();
+my @indexStyle=();
+my @indexFile=();
+my @indexOutput=();
+my %indexCmdline=();
+my @commands=();
+my @savedopts=();
+my @loadedopts=();
+my @bib=();
+my %pseudofile=();
+my %includedopts=();
+my ($hash,$oldhash,$in,$out,$oldin,$oldout)=({},{},{},{},{},{});
+my $round=0;
+my $mainkey='';
+my ($inputfile,$stem,$outputfile,$hashfile);
+$stem=undef;
+&init(@ARGV);
+
+sub init {
+  &parseARGV(1,@_);
+  if ($help) {
+    &usage($help);
+  }
+  $hashfile="$stem.md5";
+  $outputfile="$stem.pdf";
+  &loadFiles;
+  if (!$forget && $#loadedopts > -1) {
+    &parseARGV(0,@loadedopts);
+  }
+  # persistance
+  my $i=0;
+  foreach (@indexFile) {
+    &processIndexOption($_,$i,1);
+    $i++;
+  }
+  foreach (@bibFile) {
+    &processBibOption($_,1);
+  }
+  open FILE,$inputfile;
+  my @infile=();
+  while (<FILE>) {
+    chomp;
+    next unless /^%+\s*compile-latex\s+option\s*:(.*$)/;
+    push @infile,$1;
+  }
+  close FILE;
+  if ($#infile != -1) {
+    parseARGV(0,@infile);
+  }
+  # automatic mode
+  if ($auto<1) {
+    push @savedopts,'--manual';
+  } else {
+    if ($#indexFile==-1) {
+      &parseARGV(0,'--index');
+    }
+    if ($#bibFile==-1) {
+      &parseARGV(0,'--bibtex');
+    }
+  }
+  # treat options
+  my %list;
+  if ($deps & 0x1) {
+    foreach (&outputDepends) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps & 0x2) {
+    foreach (&outputOutputs) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps & 0x4) {
+    foreach (&outputInternals) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps) {
+    print join($inBetween,sort keys %list),"\n";
+    exit;
+  }
+  foreach (@indexFile) {
+    &processIndexOption($_,$i,0);
+    $i++;
+  }
+  foreach (@bibFile) {
+    &processBibOption($_,0);
+  }
+  &loopCommands;
+}
+sub processBibOption {
+  my ($_,$persistance)=@_;
+  my $cmdline=['bibtex',$_];
+  my $tagline=join(' ',@$cmdline);
+  my $key=&commandKey(@$cmdline);
+  if (!exists($includedopts{$key})) {
+    push @commands,{'proc' => \&pseudofileBib,
+                       'args' => {'input'=>$_,'autobib'=>2
+                                 }};
+    push @commands,{'proc' => \&genericRunner,
+                       'args' => {'input'=>'pseudo://bib/'.$_,
+                                  'tagline'=>$tagline,
+                                  'cmdline'=>$cmdline,'autobib'=>1
+                                 }};
+    if ($persistance) {
+      push @savedopts,'--bibtex-file',$_;
+    }
+    $includedopts{$key}=1;
+  }
+}
+sub processIndexOption {
+  my ($_,$i,$persistance)=@_;
+  my $cmdline=['makeindex'];
+  push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
+  push $cmdline,'-t',$indexStyle[$i] if (exists($indexStyle[$i]));
+  # my @indexOptions=();
+  push $cmdline,$_;
+  my $tagline=join(' ',@$cmdline);
+  my $key=&commandKey(@$cmdline);
+  if (!exists($includedopts{$key})) {
+    push @commands,{'proc'=>\&genericRunner,
+                    'args'=>{'input'=>$_,
+                             'tagline'=>$tagline,
+                             'cmdline'=>$cmdline
+                            }
+                   };
+    if ($persistance) {
+      push @savedopts,'--index-file',$_;
+      push @savedopts,'--index-output',$indexOutput[$i] if (exists($indexOutput[$i]));
+      push @savedopts,'--index-style',$indexStyle[$i]if (exists($indexStyle[$i]));
+    }
+    $includedopts{$key}=1;
+  }
+}
+
+sub pseudofileBib {
+  my ($arg,$tmpdir)=@_;
+  my $inputfile=$arg->{'input'};
+  my $outputfile='pseudo://bib/'.$inputfile;
+  my $key="pseudofileBib ".&quote($inputfile);
+  my $tagline="Extracting bibliography from $inputfile";
+  &forceDependency($key,$inputfile);
+  my @changed=&preMortem($key);
+  if ($#changed==-1) {
+    # Necessary only for debug
+    &xlog(3,"▲ $tagline...done\n");
+    &postVitam($key);
+    return 1;
+  } elsif ($#changed < 5) {
+    &xlog(2,'Changed: ',join(' ',@changed),'');
+  } else {
+    &xlog(2,'Changed: ',$#changed,' files','');
+    &xlog(6,'Changed: ',join(' ',@changed),'');
+  }
+  &xlog(2,"△ $tagline...");
+  open FILE,$inputfile;
+  my $data='';
+  while (<FILE>) {
+    next unless (/^\\bibstyle/ or /^\\bibdata/ or /^\\citation/);
+    $data.=$_;
+  }
+  close FILE;
+  &xlog(2,"ok\n");
+  $out->{$key}={};
+  $in->{$key}={};
+  $out->{$key}->{$outputfile}="1";
+  $in->{$key}->{$inputfile}="1";
+  if ($data eq '') {
+    delete $pseudofile{$outputfile};
+  } else {
+    $pseudofile{$outputfile}=$data;
+  }
+  foreach (keys %{$out->{$key}}) {
+    if (!exists($hash->{$_})) {
+      $hash->{$_}="?";
+    }
+  }
+  foreach (keys %{$in->{$key}}) {
+    if (!exists($hash->{$_})) {
+      &hashFile($_,$hash);
+    }
+    $in->{$key}->{$_}=$hash->{$_};
+  }
+  return 0;
+}
+sub loopCommands {
+  if ($auto) {
+    unshift @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
+  }
+  unshift @commands,{'proc' => \&latexFile,'args' => {}};
+  unshift @commands,{'proc' => \&newRound,'args' => {}};
+  # Do something more
+  push @commands,{'proc' => \&storeFiles,'args' => {}};
+  opendir (my $dh,'.') || die "Could not open current directory: $!";
+  while (readdir($dh)) {
+    next unless /^${stem}\./;
+    hashFile($_,$hash);
+  }
+  closedir($dh);
+  my $commandindex=-1;
+  my $commandredo=1;
+  my $tmpdir=tempdir(CLEANUP => 1);
+  while ($commandredo) {
+    my $i=-1;
+    $commandredo=0;
+    while ($i < $#commands) { # not a foreach, because the list can change
+      $i++;
+      my $comm=$commands[$i];
+      my $func=$comm->{'proc'};
+      my $ret=&$func($comm->{'args'},$tmpdir);
+      $commandredo=1 unless ($ret);
+    }
+  }
+  exit;
+}
+sub parseARGV {
+  my @args=();
+  my $forcefilename=shift @_;
+  my @lonearg=();
+  my @loneopts=('--help','--force','--depends','--outputs','--quiet',
+                '--index','--forget','--man','--internals','--usage',
+                '--nroff','--bibtex','--manual','--auto'
+               );
+  my @oneopts=('--separator','--index-file','--index-style','--index-output',
+               '--index-file-suffix','--index-output-suffix','--index-options',
+               '--input','--debug','--bibtex-file');
+  my $m;
+ ARGS: while ($#_>-1) {
+    $_=shift @_;
+    foreach $m (@loneopts) {
+      if (/^$m$/) {
+        push @args,[$_];
+        next ARGS;
+      }
+    }
+    foreach $m (@oneopts) {
+      if (/^$m$/) {
+        push @args,[$_,$_[0]] if (/^$m$/);
+        shift @_;
+        next ARGS;
+      }
+    }
+    push @lonearg,$_;
+  }
+  if ($#lonearg>0) {
+    shift @lonearg;
+    print STDERR "Unknown options ",join(', ',@lonearg),"\n";
+    &usage;
+  }
+  if ($#lonearg==0 && $forcefilename == 1) {
+    &setStem(&unquote($lonearg[0]),0);
+  }
+  foreach (@args) {
+    my $arg=${$_}[0];
+    if ($arg eq '--help') {
+      $help="help";
+    } elsif ($arg eq '--man') {
+      $help="man";
+    } elsif ($arg eq '--nroff') {
+      $help="nroff";
+    } elsif ($arg eq '--usage') {
+      $help="usage";
+    } elsif ($arg eq '--forget') {
+      $forget=1;
+    } elsif ($arg eq '--force') {
+      $forcenext=1;
+    } elsif ($arg eq '--auto') {
+      $auto++;
+    } elsif ($arg eq '--manual') {
+      $auto--;
+    } elsif ($arg eq '--depends') {
+      $debug=0;
+      $deps=$deps|0x1;
+    } elsif ($arg eq '--outputs') {
+      $debug=0;
+      $deps=$deps|0x2;
+    } elsif ($arg eq '--internals') {
+      $debug=0;
+      $deps=$deps|0x4;
+    } elsif ($arg eq '--quiet') {
+      $debug=0;
+    } elsif ($arg eq '--debug') {
+      $debug=int(${$_}[1]);
+    } elsif ($arg eq '--separator') {
+      $inBetween=&unquote(${$_}[1]);
+    } elsif ($arg eq '--index') {
+      push @indexFile,"$stem.idx";
+    } elsif ($arg eq '--bibtex') {
+      push @bibFile,"$stem.aux";
+    } elsif ($arg eq '--index-file') {
+      push @indexFile,${$_}[1];
+    } elsif ($arg eq '--bibtex-file') {
+      push @bibFile,${$_}[1];
+    } elsif ($arg eq '--index-file-suffix') {
+      push @indexFile,$stem.'.'.${$_}[1];
+    } elsif ($arg eq '--index-output-suffix') {
+      push @indexFile,$stem.'.'.${$_}[1];
+    } elsif ($arg eq '--index-options') {
+      die "No index-file yet!" if ($#indexFile == -1);
+      $indexOptions[$#indexFile]=[map {&unquote($_)} split(/ /,${$_}[1])];
+    } elsif ($arg eq '--index-style') {
+      die "No index-file yet!" if ($#indexFile == -1);
+      $indexStyle[$#indexFile]=&unquote(${$_}[1]);
+    } elsif ($arg eq '--index-output') {
+      die "No index-file yet!" if ($#indexFile == -1);
+      $indexOutput[$#indexFile]=&unquote(${$_}[1]);
+    }
+  }
+  if ($#lonearg==-1 && $forcefilename == 1 && !$help) {
+    print STDERR "No file specified\n";
+    &usage;
+  }
+}
+
+sub loadFiles {
+  my ($arg,$tmpdir)=@_;
+  &xlog(3,"▲ Loading hashes\n");
+  open FILE,"$hashfile" or return;
+  while (<FILE>) {
+    chomp;
+    next unless /^([a-z]+);([^;]+);([^;]+);(.*)$/;
+    my ($t,$p,$v,$f)=($1,$2,$3,$4);
+    if ($t eq 'in') {
+      $in->{$p}={} unless (exists($in->{$p}));
+      $in->{$p}->{$f}=$v;
+    }
+    if ($t eq 'out') {
+      $out->{$p}={} unless (exists($out->{$p}));
+      $out->{$p}->{$f}=$v;
+    }
+    if ($t eq 'option') {
+      push @loadedopts,&unquote($p);
+    }
+    if ($t eq 'pseudofile') {
+      $pseudofile{&unquote($v)}=&unquote($p);
+    }
+  }
+  close FILE;
+  return 1;
+}
+sub newRound {
+  my ($arg,$tmpdir)=@_;
+  $round++;
+  &xlog(2,"▲ Round $round\n");
+  $oldhash=$hash;
+  $oldin=$in;
+  $oldout=$out;
+  $in={};
+  $out={};
+  return 1;
+}
+sub autoDiscovery {
+  return 1 if ($round > 1);
+  my $tagline=("Auto-discovery");
+  &xlog(2,"△ $tagline...");
+  &xlog(2,"ok\n");
+  foreach my $file (keys %{$out->{$mainkey}}) {
+    next unless existFile($file);
+    open FILE,$file;
+    my $bib=0;
+    while (<FILE>) {
+      if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
+        $bib=1;next;
+      } else {
+        $bib=0;last;
+      }
+    }
+    close FILE;
+    if ($bib) {
+      &xlog(5,"Spotted...$file",'');
+      my $a=pop @commands;
+      processBibOption($file,0);
+      push @commands,$a;
+    }
+  }
+  return 1;
+}
+sub latexFile {
+  my ($arg,$tmpdir)=@_;
+  my $tmpfile=File::Spec->catfile($tmpdir,"trace");
+  my @cmdline=('pdflatex','-interaction','batchmode','-halt-on-error',
+               $inputfile);
+  my $tagline=("pdflatex $inputfile");
+  my $key=&commandKey(@cmdline);
+  $mainkey=$key;
+  &forceDependency($key,$inputfile);
+  my @changed=&preMortem($key);
+  if ($#changed==-1) {
+    # Necessary only for debug
+    &xlog(3,"▲ $tagline...done\n");
+    &postVitam($key);
+    return 1;
+  } elsif ($#changed < 5) {
+    &xlog(2,'Changed: ',join(' ',@changed),'');
+  } else {
+    &xlog(2,'Changed: ',$#changed,' files','');
+    &xlog(6,'Changed: ',join(' ',@changed),'');
+  }
+  &xlog(1,"△ $tagline...");
+  $a=executeCommand('',
+                    'strace','-f','-e','trace=access,open',
+                    '-o',$tmpfile,
+                    @cmdline
+                   );
+  if ($a->[0] == 0) {
+    &xlog(1,"ok\n");
+  } else {
+    &xlog(1,"fail\n");
+    &storeFiles;
+    die "Argh";
+  }
+  &postMortem($key,$tmpfile);
+  return 0;
+}
+sub genericRunner {
+  my ($arg,$tmpdir)=@_;
+  my $input=$arg->{'input'};
+  my $tmpfile=File::Spec->catfile($tmpdir,"trace");
+  my @cmdline=@{$arg->{'cmdline'}};
+  my $tagline=$arg->{'tagline'};
+  my $key=&commandKey(@cmdline);
+  &forceDependency($key,$input);
+  my @changed=&preMortem($key);
+  if ($#changed==-1 || ($hash->{$input} eq "0")) {
+    # Necessary only for debug
+    &xlog(3,"▲ $tagline...done\n");
+    &postVitam($key);
+    return 1;
+  } elsif ($#changed < 5) {
+    &xlog(2,'Changed: ',join(' ',@changed),'');
+  } else {
+    &xlog(2,'Changed: ',$#changed,' files','');
+    &xlog(6,'Changed: ',join(' ',@changed),'');
+  }
+  &xlog(1,"△ $tagline...");
+  $a=executeCommand('',
+                    'strace','-f','-e','trace=access,open',
+                    '-o',$tmpfile,
+                    @cmdline
+                   );
+  if ($a->[0] == 0) {
+    &xlog(1,"ok\n");
+  } else {
+    &xlog(1,"fail\n");
+    die "Argh";
+  }
+  &postMortem($key,$tmpfile);
+  $in->{$key}->{$input}=$hash->{$input};
+  return 0;
+}
+sub storeFiles {
+  my ($arg,$tmpdir)=@_;
+  my $v;
+  &xlog(2,"▲ Storing hashes\n");
+  $out->{'storeFiles'}={$hashfile=>1};
+  open FILE,">$hashfile";
+  foreach my $prog (sort keys %$in) {
+    foreach my $key (sort keys %{$in->{$prog}}) {
+      $v=$in->{$prog}->{$key};
+      print FILE "in;$prog;$v;$key\n";
+    }
+  }
+  foreach my $prog (sort keys %$out) {
+    foreach my $key (sort keys %{$out->{$prog}}) {
+      $v=$out->{$prog}->{$key};
+      print FILE "out;$prog;$v;$key\n";
+    }
+  }
+  foreach my $opt (@savedopts) {
+    print FILE "option;",&quote($opt),";1;\n";
+  }
+  foreach my $opt (keys %pseudofile) {
+    print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
+  }
+  close FILE;
+  return 1;
+}
+
+sub postVitam {
+  my ($key)=@_;
+  $in->{$key}=&clone($oldin->{$key});
+  $out->{$key}=&clone($oldout->{$key});
+  foreach (keys %{$out->{$key}}) {
+    if (!exists($hash->{$_})) {
+      $hash->{$_}="?";
+    }
+  }
+}
+sub postMortem {
+  my ($key,$tmpfile)=@_;
+  open TRACE,"$tmpfile";
+  while (<TRACE>) {
+    if (/^[0-9]+\s+access\("([^"]*)",.R_OK\)\s*=\s*[-0-9]*/) {
+      my $file=$1;
+      $file =~ s/^\.\///g;
+      $in->{$key}->{$file}="1";
+      next;
+    }
+    if (/^[0-9]+\s+open\("([^"]*)",.O_WRONLY.*\)\s*=\s*[-0-9]*$/) {
+      my $file=$1;
+      $file =~ s/^\.\///g;
+      $out->{$key}->{$file}="1";
+      next;
+    }
+  }
+  close TRACE;
+  unlink $tmpfile;
+  # Update hash
+  foreach (keys %{$out->{$key}}) {
+    if (!exists($hash->{$_})) {
+      $hash->{$_}="?";
+    }
+  }
+  foreach (keys %{$in->{$key}}) {
+    if (!exists($hash->{$_})) {
+      &hashFile($_,$hash);
+    }
+    $in->{$key}->{$_}=$hash->{$_};
+  }
+}
+sub forceDependency {
+  my ($key,$file)=@_;
+  if (!exists($oldin->{$key})) {
+    $oldin->{$key}={};
+  }
+  return unless existFile($file);
+  if (!exists($oldin->{$key}->{$file})) {
+    $oldin->{$key}->{$file}="1";
+  }
+}
+sub preMortem {
+  my ($key)=@_;
+  my $changed=0;
+  my @changed=();
+  if (!exists($oldin->{$key})) {
+    $oldin->{$key}={};
+  }
+  if (!exists($oldout->{$key})) {
+    $oldout->{$key}={};
+  }
+  my @inkeys=keys %{$oldin->{$key}};
+  my @outkeys=keys %{$oldout->{$key}};
+  &hashArray(@inkeys);
+  foreach (@inkeys) {
+    if (!exists $oldin->{$key}->{$_}) {
+      $oldin->{$key}->{$_}="?";
+    }
+    if ($hash->{$_} ne $oldin->{$key}->{$_}) {
+      &xlog(5,"H: $_ ".$oldin->{$key}->{$_}."=>".$hash->{$_}."\n");
+      push @changed,$_;
+    }
+  }
+  foreach (@outkeys) {
+    if (!existFile($_)) {
+      push @changed,'miss:'.$_;
+    }
+  }
+  return @changed;
+}
+
+sub usage {
+  ### usage ($option)
+  ### Provides all kinds of textual help and stops
+  my ($option)=@_;
+  if (!defined($option)) {
+    $option="usage";
+  }
+  my $cmd="pod2txt";
+  my $release="0.5";
+  my ($a,$out,$b);
+  if ($option eq "man"||$option eq "nroff") {
+    ($a,$out,$b)=@{&executeCommand("","pod2man","$0","--center","User commands","--release",$release)};
+    if ($a==0 && $option eq "man") {
+      ($a,$out,$b)=@{&executeCommand($out,"nroff","-man","-")};
+    }
+  } else {
+    ($a,$out,$b)=@{&executeCommand("","pod2text","$0")};
+  }
+  if ($option eq "usage") {
+    $out =~ s/DESCRIPTION.*$//s;
+  }
+  print $out;
+  exit;
+}
+sub usageOLD {
+  print "compile-latex --help\n";
+  print "compile-latex [--quiet] [--force] [index options] file.tex\n";
+  print "index: --index-file X [--index-options X] [--index-style X] [--index-output X]\n";
+  print "       --index = --index-file file.idx\n";
+  print "compile-latex [--separator X] --depends\n";
+  print "compile-latex [--separator X] --outputs\n";
+  exit;
+}
+sub outputDepends {
+  my %list=();
+  foreach my $prog (sort keys %$in) {
+  KEY: foreach my $key (sort keys %{$in->{$prog}}) {
+      next KEY if $key=~/^\//;
+      next KEY if $key=~/^pseudo:\/\//;
+      next KEY if ($in->{$prog}->{$key} eq "0");
+      foreach my $otherprog (sort keys %$out) {
+        if (exists ($out->{$otherprog}->{$key})) {
+          next KEY;
+        }
+      }
+      $list{$key}=1;
+    }
+  }
+  return keys %list;
+}
+sub outputOutputs {
+  my %list=();
+  foreach my $prog (sort keys %$out) {
+  KEY: foreach my $key (sort keys %{$out->{$prog}}) {
+      next KEY if $key=~/^\//;
+      next KEY if $key=~/^pseudo:\/\//;
+      foreach my $otherprog (sort keys %$in) {
+        if (exists ($in->{$otherprog}->{$key})) {
+          next KEY;
+        }
+      }
+      $list{$key}=1;
+    }
+  }
+  return keys %list;
+}
+sub outputInternals {
+  my %list=();
+  foreach my $prog (sort keys %$out) {
+  KEY: foreach my $key (sort keys %{$out->{$prog}}) {
+      next KEY if $key=~/^\//;
+      next KEY if $key=~/^pseudo:\/\//;
+      foreach my $otherprog (sort keys %$in) {
+        if (exists ($in->{$otherprog}->{$key})) {
+          goto DOUBLE;
+        }
+      }
+      next KEY;
+    DOUBLE:
+      $list{$key}=1;
+    }
+  }
+  return keys %list;
+}
+
+sub unquote {
+  my $d=shift @_;
+  $d=~s/%3B/\n/g;
+  $d=~s/%0A/\n/g;
+  $d=~s/%20/ /g;
+  $d=~s/%25/%/g;
+  return $d;
+}
+sub quote {
+  my $d=shift @_;
+  $d=~s/%/%25/g;
+  $d=~s/ /%20/g;
+  $d=~s/;/%3B/g;
+  $d=~s/\n/%0A/g;
+  return $d;
+}
+sub setStem {
+  my ($s,$extended)=@_;
+  $inputfile=$s;
+  $inputfile.='.tex' unless ($s =~ /\.tex$/ xor $extended);
+  if (! -r $inputfile || -d $inputfile) {
+    if (!$extended) {
+      setStem($s,1);
+    } else {
+      die "$s: not readable file";
+    }
+  }
+  $stem=$inputfile;
+  $stem=~s/\.tex$//g;
+  return;
+}
+sub commandKey {
+  my $d=join(' ',map {&quote($_)} @_);
+  return $d;
+}
+
+sub executeCommand {
+  my $in=shift @_;
+  &xlog(6,"Executing: ".join(' ',@_));
+  my $outputtext="";
+  my $errtext="";
+  my $pid=open3(\*INPUT, \*OUTPUT, \*ERR,@_);
+  print INPUT $in;
+  close(INPUT);
+  my $done=0;
+  do {
+    while (<OUTPUT>) {
+      $outputtext.=$_;
+    }
+    while (<ERR>) {
+      $errtext.=$_;
+    }
+    $done=waitpid($pid,WNOHANG);
+  } until ($done>0);
+  return [ $?, $outputtext, $errtext ];
+}
+sub existFile {
+  my ($f)=@_;
+  if ($f =~ /^pseudo:\/\//) {
+    return 1;
+  }
+  return 0 if -d $f;
+  return -r $f;
+}
+sub hashFile {
+  my ($f,$hash)=@_;
+  $hash->{$f}="0";
+  if ($f =~ /^pseudo:\/\//) {
+    return if (!exists $pseudofile{$f});
+    my $hashing = Digest::MD5->new;
+    $hashing->add($pseudofile{$f});
+    $hash->{$f}=$hashing->hexdigest;
+    return;
+  }
+  return "0" if (-d $f);
+  return "0" unless (-e $f);
+  open FILE,"$f" or return "0";
+  my $hashing = Digest::MD5->new;
+  $hashing->addfile(*FILE);
+  $hash->{$f}=$hashing->hexdigest;
+  close FILE;
+}
+sub hashArray {
+  foreach (@_) {
+    &hashFile($_,$hash);
+  }
+}
+
+sub xlog {
+  $|=1;
+  my $level=shift @_;
+  print join("\n",@_) unless ($level>$debug);
+}
+
+# $old* is cloned at the round begin from the old ones
+# just before a command, compute hash and compare for all the $oldin
+# just after a command, register $in, $out, and update hashes for all $out
+# Main algorithm:
+# - commandok = 0
+# - BEGIN
+# - new round
+# - ensure $output of the command is in $oldin
+# - compare for all keys of $oldin $hash and $oldin->prog->key
+# - If one differs and some running criteria are met (existence of some input file?):
+# - - run the command
+# - - read $in and $out for the command
+# - - update (force rereading) of $hashes for all keys of $out
+# - - commandcount = 0
+# - else
+# - - command would do the same thing
+# - - copy $oldin, $oldout to $in and $out
+# - - copy $oldhashes to $hashes for all keys of $out
+# - - commandcount++
+# - pass to next command
+# - when no more commands, goto BEGIN
+
+# command = { 'proc' -> \&toto, 'args' -> {} } and returns 0 (to be redone) or 1 (not to be redone)
+# command = { 'proc' -> \&genericRunner, 'args' -> {'in'=>$input,'tagline'=>$tagline,'cmdline'=>['some','prog','with','options'] }} and returns 0 (to be redone) or 1 (not to be redone)
+
+=pod
+
+=head1 NAME
+
+compile-latex - compile TeX files as many times as needed
+
+=head1 SYNOPSIS
+
+compile-latex [I<options>] file[.tex]
+
+compile-latex B<--depends>|B<--outputs>|B<--internals> file[.tex]
+
+compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
+
+=head1 OPTIONS
+
+=head2 GENERIC OPTIONS
+
+B<--debug> I<n> Change the verbosity level to I<n> (see L</"DEBUG">).
+
+B<--forget> Forget persistent options stored for the file (e.g. index
+options).
+
+B<--manual> Removes automatic mode. This option is persistant.
+
+B<--auto> (default) Reinstates automatic mode. Use it to remove
+B<--manual> effect. Currently has the effect of B<--index>, B<--bibtex>
+if no other index option (resp. bibliography) option was selected, and
+starts the automatic discovery mode for C<bibtex>.
+
+=head2 BIBTEX OPTIONS
+
+B<--bibtex-file> I<somefile> Marks some file to be an input for
+C<bibtex>. Can be given multiple times. Automatic mode will probably
+spot all bibtex-able files anyway, so mostly useful in manual mode.
+
+B<--bibtex> Equivalent to B<--bibtex-file> I<file.aux>.
+
+=head2 INDEX OPTIONS
+
+B<--index-file> I<somefile> Marks some file to be an input for
+C<makeindex>. Can be given multiple times.
+
+B<--index-file-suffix> I<extension> The same as above, but for the file
+I<file>.I<extension>.
+
+Each of the following option applies to the preceding C<index-file>:
+
+B<--index-style> I<somefile> Corresponds to option B<-t> of makeindex.
+
+B<--index-output> I<somefile> Corresponds to option B<-t> of makeindex.
+
+B<--index-output-suffix> I<extension> The same as above, but for the file
+I<file>.I<extension>.
+
+B<--index-options> I<string> Corresponds to other options of makeindex,
+separated by spaces, see L</"QUOTING">.
+
+=head2 DEPENDENCY OPTIONS
+
+B<--depends> List local files read by compilation and not overwritten
+(C<.tex>, C<.cls>,...)
+
+B<--internals> List local files both output and read by compilation
+(C<.aux>...)
+
+B<--outputs> List local files output by compilation, but not read
+(C<.log>...).
+
+B<--separator> I<string> Use this quoted string as separator between
+names instead of one space (see L</"QUOTING">).
+
+=head2 HELP OPTIONS
+
+B<--help> Generate this help (long version).
+
+B<--usage> Generate this help (short version).
+
+B<--man> Generate man page.
+
+B<--nroff> Generate man page in NROFF format.
+
+=head1 DESCRIPTION
+
+compile-latex is a program that compiles a TeX file until it reaches a
+fixed point. The program assumes that if all the inputs of a program are
+the same, then not repeating this program is acceptable; and if any
+input of a program changes, then the program is rerun.
+
+compile-latex also manages makeindex. It supports the use of
+the C<multind> and C<index> packages for multiple indexes; however, the
+automatic mode only uses the C<.idx> -> C<.ind> standard index.
+
+compile-latex also manages bibtex. It currently supports only simple
+bibliography or multibib package (with hints); bibtopic, biblatex are
+not supported).
+
+compile-latex remembers from one compilation to another the index options
+it was given. It is not necessary to repeat them (not harmful either).
+
+compile-latex uses strace to determine the files accessed by a program.
+
+=head1 GIVING OPTIONS
+
+Options may come from:
+
+=over
+
+=item * the command line
+
+=item * previous invocations (unless B<--forget> is used)
+
+=item * the file itself in specially formatted comments
+
+=item * automatic mode
+
+=back
+
+Some options coming from the command line and previous invocations will
+be stored in the C<file.md5> file and will be reused at later
+invocations. They are the index options, bibtex options and the
+B<--manual> option (since B<--auto> is on by default, it does not need
+to be stored).
+
+Comment lines in the file formatted as follows: one or more percent
+char, zero or more spaces, the string C<compile-latex>, one or more
+spaces, the string C<"option">, zero or more spaces, the string C<":">
+and one option (without any excess spaces), will be considered as an
+option. These options will not be stored for later invocations, since
+they are in the file anyway.
+
+=head1 QUOTING
+
+Each option expects a single argument. Some may require spaces to
+separate various parts (e.g. B<--index-options>). If one part needs
+spaces (a filename, for example), use C<%20> for the space inside the
+part. Use C<%25> for a litteral C<%> and C<%3B> for a C<;>. Quoting
+should almost never be necessary.
+
+=head1 DEBUG
+
+Debug level varies from 0 (silent, except for results of B<--depends> or
+like options) to 7 (very verbose).
+
+The default level is 1 and will print all time consuming operations.
+
+Level 2 will print changed files before launching time consuming operations.
+
+Level 3 will print all operations even skipped ones.
+
+Level 5 will print changed checksums.
+
+=head1 EXAMPLES
+
+B<compile-latex file.tex>
+
+will compile C<file.tex> as many times as necessary, processing index
+and bibtex files as many times as necessary too (sometimes, bibtex index
+have to be processed several times because of cross-references).
+
+B<compile-latex file.tex --manual --index-file-suffix adx
+--index-output-suffix and --index-options '-g -t /tmp/log%20indexation'
+--index-file-suffix odx --index-output-suffix ond --bibtex>
+
+will compile C<file.tex> and do some special treatment for auxiliary
+programs. First, normal index C<file.idx> will not be processed, as well
+as support for multibib (only a normal C<bibtex file> will be
+issued). However, two index files ending in C<.adx> and C<.odx> (coming
+from the C<multind> package for example) will be processed to
+C<file.and> and the second one to C<file.ond>, the first being indexed
+with the C<makeindex> options C<-g> and C<-t /tmp/log indexation>
+(remark the space in the filename).
+
+=head1 BUGS
+
+Generation of pictures by other programs is not supposed to be done by
+C<compile-latex>, unless the document uses C<write18> to generate the
+images (in which case, compile-latex will happily rerun the generation).
+
+=head1 AUTHOR
+
+Copyright Jean-Christophe Dubacq 2012
+
+=head1 COPYING
+
+This work is licensed under the BSD licence. It is explicitly stated
+here that the license does not extend to the data managed by the
+  program, in case anyone had doubts.
+
+=cut
