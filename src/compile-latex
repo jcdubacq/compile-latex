@@ -107,7 +107,6 @@ sub init {
     exit;
   }
   foreach (@indexFile) {
-    print "$_   $i\n";
     &processIndexOption($_,$i,0);
     $i++;
   }
