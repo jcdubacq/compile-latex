@@ -34,8 +34,37 @@ GENERATED02 = \
 SOURCE02 = \
 02.tex
 
+GENERATED03 = \
+03.aux\
+03.bbl\
+03.blg\
+03.log\
+03.md5\
+03.pdf
+
+SOURCE03 = \
+03-annex.tex\
+03.tex\
+test.bib
+
+GENERATED04 = \
+04.aux\
+04.bbl\
+04.blg\
+04.log\
+04.md5\
+04.pdf\
+xampl.aux\
+xampl.bbl\
+xampl.blg
+
+SOURCE04 = \
+04.tex\
+test.bib\
+xampl.bib
+
 # End of make depends
-STEMS=00 01 02
+STEMS=00 01 02 03 04
 TOPDIR=../src
 
 LATEX=$(TOPDIR)/compile-latex

@@ -1,0 +1,14 @@
+% Document with multibib using crossref'ed references
+\documentclass{article}
+\usepackage{multibib}
+\newcites{xampl}{Examples from bibtex}
+\bibliographystyle{plain}
+\bibliographystylexampl{alpha}
+\begin{document}
+Some big biblio, testing for \cite{CL12,CL13}.
+
+\nocitexampl{*}
+
+\bibliography{test}
+\bibliographyxampl{xampl}
+\end{document}
