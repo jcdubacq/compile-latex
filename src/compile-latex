@@ -107,6 +107,7 @@ sub init {
     exit;
   }
   foreach (@indexFile) {
+    print "$_   $i\n";
     &processIndexOption($_,$i,0);
     $i++;
   }
@@ -321,7 +322,7 @@ sub parseARGV {
     } elsif ($arg eq '--index-file-suffix') {
       push @indexFile,$stem.'.'.${$_}[1];
     } elsif ($arg eq '--index-output-suffix') {
-      push @indexFile,$stem.'.'.${$_}[1];
+      $indexOutput[$#indexFile]=$stem.'.'.${$_}[1];
     } elsif ($arg eq '--index-options') {
       die "No index-file yet!" if ($#indexFile == -1);
       $indexOptions[$#indexFile]=[map {&unquote($_)} split(/ /,${$_}[1])];
