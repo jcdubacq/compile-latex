@@ -9,7 +9,8 @@ compile-latex \[_options_\] file\[.tex\]
 compile-latex __\--depends__|__\--outputs__|__\--internals__ file\[.tex\]
 
 compile-latex __\--help__|__\--man__|__\--nroff__|__\--usage__
-=head1 OPTIONS
+
+# OPTIONS
 
 ## GENERIC OPTIONS
 
