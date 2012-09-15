@@ -1,0 +1,9 @@
+% Simple document with a standard index and two compilations
+\documentclass{article}
+\usepackage{makeidx}
+\makeindex
+\begin{document}
+\section{toto}\label{titi}
+Toto\index{Toto}~\ref{titi}
+\printindex
+\end{document}
