@@ -1,0 +1,22 @@
+% Document with two indexes (index package), and in-file options
+% compile-latex option:--manual
+% compile-latex option:--index
+% compile-latex option:--index-file-suffix
+% compile-latex option:adx
+% compile-latex option:--index-output-suffix
+% compile-latex option:and
+\documentclass{article}
+\usepackage{index}
+\makeindex
+\newindex{aut}{adx}{and}{Name Index}
+\begin{document}
+toto
+\newpage
+\index[aut]{Another thing}
+\newpage
+titi
+\index{FAQs}
+tutu
+\printindex
+\printindex[aut]
+\end{document}
