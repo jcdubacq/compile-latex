@@ -14,7 +14,7 @@ compile-latex __\--help__|__\--man__|__\--nroff__|__\--usage__
 
 ## GENERIC OPTIONS
 
-__\--debug__ _n_ Change the verbosity level to _n_ (see ["DEBUG"](#DEBUG)).
+__\--debug__ _n_ Change the verbosity level to _n_ (see ["DEBUG"](#debug)).
 
 __\--forget__ Forget persistent options stored for the file (e.g. index
 options).
@@ -52,7 +52,7 @@ __\--index-output-suffix__ _extension_ The same as above, but for the file
 _file_._extension_.
 
 __\--index-options__ _string_ Corresponds to other options of makeindex,
-separated by spaces, see ["QUOTING"](#QUOTING).
+separated by spaces, see ["QUOTING"](#quoting).
 
 ## DEPENDENCY OPTIONS
 
@@ -66,7 +66,7 @@ __\--outputs__ List local files output by compilation, but not read
 (`.log`...).
 
 __\--separator__ _string_ Use this quoted string as separator between
-names instead of one space (see ["QUOTING"](#QUOTING)).
+names instead of one space (see ["QUOTING"](#quoting)).
 
 ## HELP OPTIONS
 
