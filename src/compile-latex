@@ -943,15 +943,16 @@ Level 5 will print changed checksums.
 
 =head1 EXAMPLES
 
-B<compile-latex file.tex>
+    compile-latex file.tex
 
 will compile C<file.tex> as many times as necessary, processing index
 and bibtex files as many times as necessary too (sometimes, bibtex index
 have to be processed several times because of cross-references).
 
-B<compile-latex file.tex --manual --index-file-suffix adx
---index-output-suffix and --index-options '-g -t /tmp/log%20indexation'
---index-file-suffix odx --index-output-suffix ond --bibtex>
+    compile-latex file.tex --manual --index-file-suffix adx \
+    --index-output-suffix and \
+    --index-options '-g -t /tmp/log%20indexation' \
+    --index-file-suffix odx --index-output-suffix ond --bibtex
 
 will compile C<file.tex> and do some special treatment for auxiliary
 programs. First, normal index C<file.idx> will not be processed, as well

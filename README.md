@@ -143,15 +143,16 @@ Level 5 will print changed checksums.
 
 # EXAMPLES
 
-__compile-latex file.tex__
+    compile-latex file.tex
 
 will compile `file.tex` as many times as necessary, processing index
 and bibtex files as many times as necessary too (sometimes, bibtex index
 have to be processed several times because of cross-references).
 
-__compile-latex file.tex --manual --index-file-suffix adx
-\--index-output-suffix and --index-options '-g -t /tmp/log%20indexation'
-\--index-file-suffix odx --index-output-suffix ond --bibtex__
+    compile-latex file.tex --manual --index-file-suffix adx \
+    --index-output-suffix and \
+    --index-options '-g -t /tmp/log%20indexation' \
+    --index-file-suffix odx --index-output-suffix ond --bibtex
 
 will compile `file.tex` and do some special treatment for auxiliary
 programs. First, normal index `file.idx` will not be processed, as well
