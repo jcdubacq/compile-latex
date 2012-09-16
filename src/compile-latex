@@ -139,7 +139,7 @@ sub processIndexOption {
   my ($_,$i,$persistance)=@_;
   my $cmdline=['makeindex'];
   push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
-  push $cmdline,'-t',$indexStyle[$i] if (exists($indexStyle[$i]));
+  push $cmdline,'-s',$indexStyle[$i] if (exists($indexStyle[$i]));
   # my @indexOptions=();
   push $cmdline,$_;
   my $tagline=join(' ',@$cmdline);
