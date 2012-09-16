@@ -140,7 +140,7 @@ sub processIndexOption {
   my $cmdline=['makeindex'];
   push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
   push $cmdline,'-s',$indexStyle[$i] if (exists($indexStyle[$i]));
-  # my @indexOptions=();
+  push $cmdline,@{$indexOptions[$i]} if (exists($indexOptions[$i]));
   push $cmdline,$_;
   my $tagline=join(' ',@$cmdline);
   my $key=&commandKey(@$cmdline);
@@ -154,7 +154,10 @@ sub processIndexOption {
     if ($persistance) {
       push @savedopts,'--index-file',$_;
       push @savedopts,'--index-output',$indexOutput[$i] if (exists($indexOutput[$i]));
-      push @savedopts,'--index-style',$indexStyle[$i]if (exists($indexStyle[$i]));
+      push @savedopts,'--index-style',$indexStyle[$i] if (exists($indexStyle[$i]));
+      if (exists($indexOptions[$i])) {
+        push @savedopts,'--index-options',@{$indexOptions[$i]};
+      }
     }
     $includedopts{$key}=1;
   }
