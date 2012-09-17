@@ -24,6 +24,7 @@ my $quiet=0;
 my $debug=1;
 my $index=0;
 my $forget=0;
+my $makefilemode='';
 my @bibFile=();
 my @indexOptions=();
 my @indexStyle=();
@@ -104,6 +105,9 @@ sub init {
   if ($deps) {
     print join($inBetween,sort keys %list),"\n";
     exit;
+  }
+  if ($makefilemode) {
+    &outputMakefile($makefilemode);
   }
   foreach (@indexFile) {
     &processIndexOption($_,$i,0);
@@ -252,7 +256,7 @@ sub parseARGV {
                );
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
-               '--input','--debug','--bibtex-file');
+               '--input','--debug','--bibtex-file','--makefile');
   my $m;
  ARGS: while ($#_>-1) {
     $_=shift @_;
@@ -306,6 +310,8 @@ sub parseARGV {
     } elsif ($arg eq '--internals') {
       $debug=0;
       $deps=$deps|0x4;
+    } elsif ($arg eq '--makefile') {
+      $makefilemode=${$_}[1];
     } elsif ($arg eq '--quiet') {
       $debug=0;
     } elsif ($arg eq '--debug') {
@@ -666,6 +672,10 @@ sub outputInternals {
   }
   return keys %list;
 }
+sub outputMakefile {
+  print "# Some makefile snippet for $makefilemode\n";
+  exit;
+}
 
 sub unquote {
   my $d=shift @_;
@@ -798,6 +808,8 @@ compile-latex [I<options>] file[.tex]
 
 compile-latex B<--depends>|B<--outputs>|B<--internals> file[.tex]
 
+compile-latex B<--makefile> B<make>|B<common> file[.tex]
+
 compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
 
 =head1 OPTIONS
@@ -854,6 +866,10 @@ B<--internals> List local files both output and read by compilation
 
 B<--outputs> List local files output by compilation, but not read
 (C<.log>...).
+
+B<--makefile> I<style> Outputs a makefile snippet that can be included
+in a Makefile to compile the file. I<style> should be C<make> or
+C<common>.
 
 B<--separator> I<string> Use this quoted string as separator between
 names instead of one space (see L</"QUOTING">).
