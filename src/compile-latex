@@ -375,7 +375,6 @@ sub loadFiles {
     if ($t eq 'outputfile') {
       $outputFile=&unquote($p);
     }
-    print "$t\n";
   }
   close FILE;
   return 1;
