@@ -43,3 +43,10 @@
 /xampl.bbl
 /xampl.blg
 # stop automatic section for 04.tex
+# start automatic section for 05.tex
+/05-annex.tex
+/05.aux
+/05.log
+/05.md5
+/05.pdf
+# stop automatic section for 05.tex

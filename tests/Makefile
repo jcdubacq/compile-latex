@@ -78,3 +78,17 @@ clean::
 depends::
 	$(COMPILELATEX) --gitignore --makefile 'Makefile' 04.tex
 # stop automatic section for 04.tex
+# start automatic section for 05.tex
+all:: 05.pdf
+do::
+	$(COMPILELATEX) 05
+05.log 05.pdf 05.md5:\
+05.tex
+	$(COMPILELATEX) 05
+distclean::
+	rm -f 05-annex.tex 05.aux 05.log 05.md5 05.pdf
+clean::
+	rm -f 05-annex.tex 05.aux 05.log 05.md5
+depends::
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 05.tex
+# stop automatic section for 05.tex

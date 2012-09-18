@@ -33,6 +33,8 @@ my @indexStyle=();
 my @indexFile=();
 my @indexOutput=();
 my %indexCmdline=();
+my %cruftout=();
+my %cruftin=();
 my @commands=();
 my @savedopts=();
 my @loadedopts=();
@@ -88,6 +90,14 @@ sub init {
     }
   }
   # treat options
+  foreach (@indexFile) {
+    &processIndexOption($_,$i,0);
+    $i++;
+  }
+  foreach (@bibFile) {
+    &processBibOption($_,0);
+  }
+  &loopCommands;
   my %list;
   if ($deps & 0x1) {
     foreach (&outputDepends) {
@@ -108,14 +118,6 @@ sub init {
     print join($inBetween,sort keys %list),"\n";
     exit;
   }
-  foreach (@indexFile) {
-    &processIndexOption($_,$i,0);
-    $i++;
-  }
-  foreach (@bibFile) {
-    &processBibOption($_,0);
-  }
-  &loopCommands;
   if ($makefilemode) {
     &outputMakefile($makefilemode,$makefileprefix);
   }
@@ -229,6 +231,7 @@ sub loopCommands {
   unshift @commands,{'proc' => \&latexFile,'args' => {}};
   unshift @commands,{'proc' => \&newRound,'args' => {}};
   # Do something more
+  push @commands,{'proc' => \&storeCruft,'args' => {}};
   push @commands,{'proc' => \&storeFiles,'args' => {}};
   opendir (my $dh,'.') || die "Could not open current directory: $!";
   while (readdir($dh)) {
@@ -386,6 +389,12 @@ sub loadFiles {
     if ($t eq 'outputfile') {
       $outputFile=&unquote($p);
     }
+    if ($t eq 'cruftin') {
+      $cruftin{$p}=1;
+    }
+    if ($t eq 'cruftout') {
+      $cruftout{$p}=1;
+    }
   }
   close FILE;
   return 1;
@@ -421,8 +430,9 @@ sub autoDiscovery {
     if ($bib) {
       &xlog(5,"Spotted...$file",'');
       my $a=pop @commands;
+      my $b=pop @commands;
       processBibOption($file,0);
-      push @commands,$a;
+      push @commands,$b,$a;
     }
   }
   return 1;
@@ -501,11 +511,28 @@ sub genericRunner {
   $in->{$key}->{$input}=$hash->{$input};
   return 0;
 }
+sub storeCruft {
+  &xlog(2,"▲ Storing modified files\n");
+  $out->{'storeFiles'}={$hashfile=>1};
+  foreach my $prog (sort keys %$out) {
+    foreach (sort keys %{$out->{$prog}}) {
+      next if /^pseudo:\/\//;
+      $cruftout{$_}=1;
+    }
+  }
+  foreach my $prog (sort keys %$in) {
+    foreach (sort keys %{$in->{$prog}}) {
+      next if /^pseudo:\/\//;
+      next unless &existFile($_);
+      $cruftin{$_}=1;
+    }
+  }
+  return 1;
+}
 sub storeFiles {
   my ($arg,$tmpdir)=@_;
   my $v;
   &xlog(2,"▲ Storing hashes\n");
-  $out->{'storeFiles'}={$hashfile=>1};
   open FILE,">$hashfile";
   foreach my $prog (sort keys %$in) {
     foreach my $key (sort keys %{$in->{$prog}}) {
@@ -525,8 +552,14 @@ sub storeFiles {
   foreach my $opt (keys %pseudofile) {
     print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
   }
-  print FILE "mainkey;",&quote($mainkey),";;;\n";
-  print FILE "outputfile;",&quote($outputFile),";;;\n";
+  foreach my $opt (keys %cruftin) {
+    print FILE "cruftin;",&quote($opt),";;\n";
+  }
+  foreach my $opt (keys %cruftout) {
+    print FILE "cruftout;",&quote($opt),";;\n";
+  }
+  print FILE "mainkey;",&quote($mainkey),";;\n";
+  print FILE "outputfile;",&quote($outputFile),";;\n";
   close FILE;
   return 1;
 }
@@ -639,52 +672,28 @@ sub usage {
 }
 sub outputDepends {
   my %list=();
-  foreach my $prog (sort keys %$in) {
-  KEY: foreach my $key (sort keys %{$in->{$prog}}) {
-      next KEY if $key=~/^\//;
-      next KEY if $key=~/^pseudo:\/\//;
-      next KEY if ($in->{$prog}->{$key} eq "0");
-      foreach my $otherprog (sort keys %$out) {
-        if (exists ($out->{$otherprog}->{$key})) {
-          next KEY;
-        }
-      }
-      $list{$key}=1;
-    }
+  foreach (sort keys %cruftin) {
+    next if exists $cruftout{$_};
+    next if /^\//;
+    $list{$_}=1;
   }
   return keys %list;
 }
 sub outputOutputs {
   my %list=();
-  foreach my $prog (sort keys %$out) {
-  KEY: foreach my $key (sort keys %{$out->{$prog}}) {
-      next KEY if $key=~/^\//;
-      next KEY if $key=~/^pseudo:\/\//;
-      foreach my $otherprog (sort keys %$in) {
-        if (exists ($in->{$otherprog}->{$key})) {
-          next KEY;
-        }
-      }
-      $list{$key}=1;
-    }
+  foreach (sort keys %cruftout) {
+    next if exists $cruftin{$_};
+    next if /^\//;
+    $list{$_}=1;
   }
   return keys %list;
 }
 sub outputInternals {
   my %list=();
-  foreach my $prog (sort keys %$out) {
-  KEY: foreach my $key (sort keys %{$out->{$prog}}) {
-      next KEY if $key=~/^\//;
-      next KEY if $key=~/^pseudo:\/\//;
-      foreach my $otherprog (sort keys %$in) {
-        if (exists ($in->{$otherprog}->{$key})) {
-          goto DOUBLE;
-        }
-      }
-      next KEY;
-    DOUBLE:
-      $list{$key}=1;
-    }
+  foreach (sort keys %cruftout) {
+    next unless exists $cruftin{$_};
+    next if /^\//;
+    $list{$_}=1;
   }
   return keys %list;
 }
