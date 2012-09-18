@@ -40,7 +40,7 @@ my %includedopts=();
 my ($hash,$oldhash,$in,$out,$oldin,$oldout)=({},{},{},{},{},{});
 my $round=0;
 my $mainkey='';
-my ($inputfile,$stem,$hashfile);
+my ($inputfile,$stem,$hashfile,$outputFile);
 $stem=undef;
 &init(@ARGV);
 
@@ -125,13 +125,13 @@ sub processBibOption {
   my $key=&commandKey(@$cmdline);
   if (!exists($includedopts{$key})) {
     push @commands,{'proc' => \&pseudofileBib,
-                       'args' => {'input'=>$_,'autobib'=>2
-                                 }};
+                    'args' => {'input'=>$_,'autobib'=>2
+                              }};
     push @commands,{'proc' => \&genericRunner,
-                       'args' => {'input'=>'pseudo://bib/'.$_,
-                                  'tagline'=>$tagline,
-                                  'cmdline'=>$cmdline,'autobib'=>1
-                                 }};
+                    'args' => {'input'=>'pseudo://bib/'.$_,
+                               'tagline'=>$tagline,
+                               'cmdline'=>$cmdline,'autobib'=>1
+                              }};
     if ($persistance) {
       push @savedopts,'--bibtex-file',$_;
     }
@@ -353,7 +353,7 @@ sub loadFiles {
   open FILE,"$hashfile" or return;
   while (<FILE>) {
     chomp;
-    next unless /^([a-z]+);([^;]+);([^;]+);(.*)$/;
+    next unless /^([a-z]+);([^;]*);([^;]*);(.*)$/;
     my ($t,$p,$v,$f)=($1,$2,$3,$4);
     if ($t eq 'in') {
       $in->{$p}={} unless (exists($in->{$p}));
@@ -372,6 +372,10 @@ sub loadFiles {
     if ($t eq 'mainkey') {
       $mainkey=&unquote($p);
     }
+    if ($t eq 'outputfile') {
+      $outputFile=&unquote($p);
+    }
+    print "$t\n";
   }
   close FILE;
   return 1;
@@ -419,6 +423,7 @@ sub latexFile {
   my @cmdline=('pdflatex','-interaction','batchmode','-halt-on-error',
                $inputfile);
   my $tagline=("pdflatex $inputfile");
+  $outputFile=$stem.'.pdf';
   my $key=&commandKey(@cmdline);
   $mainkey=$key;
   &forceDependency($key,$inputfile);
@@ -510,7 +515,8 @@ sub storeFiles {
   foreach my $opt (keys %pseudofile) {
     print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
   }
-  print FILE "mainkey;",&quote($mainkey),';;;\n';
+  print FILE "mainkey;",&quote($mainkey),";;;\n";
+  print FILE "outputfile;",&quote($outputFile),";;;\n";
   close FILE;
   return 1;
 }
@@ -673,7 +679,25 @@ sub outputInternals {
   return keys %list;
 }
 sub outputMakefile {
-  print "# Some makefile snippet for $makefilemode\n";
+  if ($makefilemode eq '_common_') {
+    print "COMPILELATEX ?= compile-latex\n";
+    print ".PHONY: compile-latex-do compile-latex-clean\n";
+  } elsif ($makefilemode eq 'make') {
+    print "# Some makefile snippet for $stem\n";
+    print "compile-latex-do::\n";
+    print "\t",join(' ',"\$(COMPILELATEX)",@savedopts,$stem),"\n";
+    print join(' ',&outputOutputs),': ',join(' ',&outputDepends),"\n";
+    print "\t",join(' ',"\$(COMPILELATEX)",@savedopts,$stem),"\n";
+    print "compile-latex-distclean::\n";
+    my %list=();
+    foreach (&outputInternals,&outputOutputs) {
+      $list{$_}++;
+    }
+    print "\trm -f ",join(' ',keys %list),"\n";
+    print "compile-latex-clean::\n";
+    delete ($list{$outputFile});
+    print "\trm -f ",join(' ',keys %list),"\n";
+  }
   exit;
 }
 
