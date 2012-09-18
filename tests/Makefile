@@ -12,11 +12,11 @@ do::
 00.tex
 	$(COMPILELATEX) 00
 distclean::
-	rm -f 00.aux 00.md5 00.pdf 00.log
+	rm -f 00.aux 00.log 00.md5 00.pdf
 clean::
-	rm -f 00.aux 00.md5 00.log
+	rm -f 00.aux 00.log 00.md5
 depends::
-	$(COMPILELATEX) --makefile 'Makefile' 00.tex
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 00.tex
 # stop automatic section for 00.tex
 # start automatic section for 01.tex
 all:: 01.pdf
@@ -26,11 +26,11 @@ do::
 01.tex
 	$(COMPILELATEX) 01
 distclean::
-	rm -f 01.idx 01.pdf 01.aux 01.ilg 01.md5 01.log 01.ind
+	rm -f 01.aux 01.idx 01.ilg 01.ind 01.log 01.md5 01.pdf
 clean::
-	rm -f 01.idx 01.aux 01.ilg 01.md5 01.log 01.ind
+	rm -f 01.aux 01.idx 01.ilg 01.ind 01.log 01.md5
 depends::
-	$(COMPILELATEX) --makefile 'Makefile' 01.tex
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 01.tex
 # stop automatic section for 01.tex
 # start automatic section for 02.tex
 all:: 02.pdf
@@ -40,11 +40,11 @@ do::
 02.tex
 	$(COMPILELATEX) --manual 02
 distclean::
-	rm -f 02.log 02.adx 02.ilg 02.aux 02.pdf 02.idx 02.ind 02.and 02.md5
+	rm -f 02.adx 02.and 02.aux 02.idx 02.ilg 02.ind 02.log 02.md5 02.pdf
 clean::
-	rm -f 02.log 02.adx 02.ilg 02.aux 02.idx 02.ind 02.and 02.md5
+	rm -f 02.adx 02.and 02.aux 02.idx 02.ilg 02.ind 02.log 02.md5
 depends::
-	$(COMPILELATEX) --makefile 'Makefile' 02.tex
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 02.tex
 # stop automatic section for 02.tex
 # start automatic section for 03.tex
 all:: 03.pdf
@@ -56,11 +56,11 @@ do::
 test.bib
 	$(COMPILELATEX) 03
 distclean::
-	rm -f 03.blg 03.aux 03.bbl 03.log 03.pdf 03.md5
+	rm -f 03.aux 03.bbl 03.blg 03.log 03.md5 03.pdf
 clean::
-	rm -f 03.blg 03.aux 03.bbl 03.log 03.md5
+	rm -f 03.aux 03.bbl 03.blg 03.log 03.md5
 depends::
-	$(COMPILELATEX) --makefile 'Makefile' 03.tex
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 03.tex
 # stop automatic section for 03.tex
 # start automatic section for 04.tex
 all:: 04.pdf
@@ -72,9 +72,9 @@ xampl.bib\
 test.bib
 	$(COMPILELATEX) 04
 distclean::
-	rm -f 04.blg 04.pdf 04.bbl 04.md5 04.log xampl.aux xampl.blg xampl.bbl 04.aux
+	rm -f 04.aux 04.bbl 04.blg 04.log 04.md5 04.pdf xampl.aux xampl.bbl xampl.blg
 clean::
-	rm -f 04.blg 04.bbl 04.md5 04.log xampl.aux xampl.blg xampl.bbl 04.aux
+	rm -f 04.aux 04.bbl 04.blg 04.log 04.md5 xampl.aux xampl.bbl xampl.blg
 depends::
-	$(COMPILELATEX) --makefile 'Makefile' 04.tex
+	$(COMPILELATEX) --gitignore --makefile 'Makefile' 04.tex
 # stop automatic section for 04.tex
