@@ -25,6 +25,7 @@ my $debug=1;
 my $index=0;
 my $forget=0;
 my $makefilemode='';
+my $makefileprefix='';
 my @bibFile=();
 my @indexOptions=();
 my @indexStyle=();
@@ -106,9 +107,6 @@ sub init {
     print join($inBetween,sort keys %list),"\n";
     exit;
   }
-  if ($makefilemode) {
-    &outputMakefile($makefilemode);
-  }
   foreach (@indexFile) {
     &processIndexOption($_,$i,0);
     $i++;
@@ -117,6 +115,10 @@ sub init {
     &processBibOption($_,0);
   }
   &loopCommands;
+  if ($makefilemode) {
+    &outputMakefile($makefilemode,$makefileprefix);
+  }
+  exit;
 }
 sub processBibOption {
   my ($_,$persistance)=@_;
@@ -244,7 +246,6 @@ sub loopCommands {
       $commandredo=1 unless ($ret);
     }
   }
-  exit;
 }
 sub parseARGV {
   my @args=();
@@ -256,7 +257,9 @@ sub parseARGV {
                );
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
-               '--input','--debug','--bibtex-file','--makefile');
+               '--input','--debug','--bibtex-file',
+               '--makefile','--makefile-prefix'
+              );
   my $m;
  ARGS: while ($#_>-1) {
     $_=shift @_;
@@ -312,6 +315,8 @@ sub parseARGV {
       $deps=$deps|0x4;
     } elsif ($arg eq '--makefile') {
       $makefilemode=${$_}[1];
+    } elsif ($arg eq '--makefile-prefix') {
+      $makefileprefix=${$_}[1];
     } elsif ($arg eq '--quiet') {
       $debug=0;
     } elsif ($arg eq '--debug') {
@@ -677,26 +682,76 @@ sub outputInternals {
   }
   return keys %list;
 }
-sub outputMakefile {
-  if ($makefilemode eq '_common_') {
-    print "COMPILELATEX ?= compile-latex\n";
-    print ".PHONY: compile-latex-do compile-latex-clean\n";
-  } elsif ($makefilemode eq 'make') {
-    print "# Some makefile snippet for $stem\n";
-    print "compile-latex-do::\n";
-    print "\t",join(' ',"\$(COMPILELATEX)",@savedopts,$stem),"\n";
-    print join(' ',&outputOutputs),': ',join(' ',&outputDepends),"\n";
-    print "\t",join(' ',"\$(COMPILELATEX)",@savedopts,$stem),"\n";
-    print "compile-latex-distclean::\n";
-    my %list=();
-    foreach (&outputInternals,&outputOutputs) {
-      $list{$_}++;
+
+sub outputSection {
+  my ($file,$section,$data)=@_;
+  my @lines=();
+  my $inside=0;
+  my $done=0;
+  if (existFile($file)) {
+    open FILE,$file;
+    while (<FILE>) {
+      if (/^# start automatic section for $section$/) {
+        $inside=1;
+        if (!$done) {
+          $done=1;
+          push @lines,"# start automatic section for $section\n";
+          push @lines,$data;
+          push @lines,"# stop automatic section for $section\n";
+        }
+        next;
+      }
+      if (/^# stop automatic section for $section$/) {
+        $inside=0;next;
+      }
+      next if $inside==1;
+      push @lines,$_;
     }
-    print "\trm -f ",join(' ',keys %list),"\n";
-    print "compile-latex-clean::\n";
-    delete ($list{$outputFile});
-    print "\trm -f ",join(' ',keys %list),"\n";
+    if (!$done) {
+      push @lines,"# start automatic section for $section\n";
+      push @lines,$data;
+      push @lines,"# stop automatic section for $section\n";
+    }
+    close FILE;
+  } else {
+    push @lines,"# start automatic section for $section\n";
+    push @lines,$data;
+    push @lines,"# stop automatic section for $section\n";
   }
+  open FILE,">$file";
+  foreach (@lines) {
+    print FILE $_;
+  }
+  close FILE;
+}
+
+sub outputMakefile {
+  my ($file,$pref)=@_;
+  &outputSection($file,'//common',"COMPILELATEX ?= compile-latex\n".
+                 "${pref}all::\n".
+                 ".PHONY: ${pref}do ${pref}depends ${pref}distclean ${pref}clean ${pref}all\n"
+                );
+
+  my $snip='';
+  $snip.="${pref}all:: $outputFile\n";
+  $snip.="${pref}do::\n";
+  $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
+  $snip.=join(' ',&outputOutputs).":\\\n".join("\\\n",&outputDepends)."\n";
+  $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
+  $snip.="${pref}distclean::\n";
+  my %list=();
+  foreach (&outputInternals,&outputOutputs) {
+    $list{$_}++;
+  }
+  $snip.="\trm -f ".join(' ',keys %list)."\n";
+  $snip.="${pref}clean::\n";
+  delete ($list{$outputFile});
+  $snip.="\trm -f ".join(' ',keys %list)."\n"; 
+  $snip.="${pref}depends::\n";
+  $snip.="\t\$(COMPILELATEX)";
+  $snip.=" --makefile-prefix $pref" if ($pref);
+  $snip.=" --makefile '$file' $inputfile\n";
+  &outputSection($file,$inputfile,$snip);
   exit;
 }
 
@@ -831,7 +886,7 @@ compile-latex [I<options>] file[.tex]
 
 compile-latex B<--depends>|B<--outputs>|B<--internals> file[.tex]
 
-compile-latex B<--makefile> B<make>|B<common> file[.tex]
+compile-latex [B<--makefile-prefix> I<prefix>] B<--makefile> I<makefile> file[.tex]
 
 compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
 
@@ -890,9 +945,12 @@ B<--internals> List local files both output and read by compilation
 B<--outputs> List local files output by compilation, but not read
 (C<.log>...).
 
-B<--makefile> I<style> Outputs a makefile snippet that can be included
-in a Makefile to compile the file. I<style> should be C<make> or
-C<common>.
+B<--makefile> I<file.mk> Outputs a makefile snippet included in
+I<file.mk>. The sections are self-delimited and replaced if already
+present.
+
+B<--makefile-prefix> Adds a common prefix to all phony targets of the
+makefile generated by the B<--makefile> option.
 
 B<--separator> I<string> Use this quoted string as separator between
 names instead of one space (see L</"QUOTING">).
