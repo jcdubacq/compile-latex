@@ -15,24 +15,32 @@ use Digest::MD5;
 use Data::Dumper;
 use Clone qw(clone);
 
-my $help=0;
-my $forcenext=0;
-my $auto=1;
-my $deps=0;
-my $inBetween=' ';
-my $quiet=0;
-my $debug=1;
-my $index=0;
-my $forget=0;
-my $makefilemode='';
-my $makefileprefix='';
-my $gitignore=0;
-my @bibFile=();
-my @indexOptions=();
-my @indexStyle=();
-my @indexFile=();
-my @indexOutput=();
-my %indexCmdline=();
+# Global variables that reflect options that will by definition
+# be the same for all files in one run.
+
+my $help=0;                     # help mode
+my $deps=0;                     # dependencies output
+my $inBetween=' ';              # Separator for deps outputs
+my $debug=1;                    # Verbosity
+my $makefilemode='';            # Makefile name
+my $makefileprefix='';          # in-Makefile common prefix
+my $gitignore=0;                # ignore outputs
+
+my $defaultenv={
+                'jobname'          =>[],
+                'indexFile'        =>[],
+                'indexFileSuffix'  =>[],
+                'indexStyle'       =>[],
+                'indexOutputSuffix'=>[],
+                'indexOptions'     =>[],
+                'indexOutput'      =>[],
+                'bibFile'          =>[],
+                'bibFileSuffix'    =>[],
+               };
+
+# These variables are specific to one run, and should be put in some
+# sort of loop.
+
 my %cruftout=();
 my %cruftin=();
 my @commands=();
@@ -46,27 +54,62 @@ my $round=0;
 my $mainkey='';
 my ($inputfile,$stem,$hashfile,$outputFile);
 $stem=undef;
+
+# launch
+
 &init(@ARGV);
+exit 0;                         # Anyway.
+
+sub mergeEnvironments {
+  # Merges env2 into env1 and returns the result
+  my ($enva,$envb)=(@_);
+  my $env=clone($enva);
+  foreach (keys %$envb) {
+    if (!exists $env->{$_}) {
+      $env->{$_}=clone($envb->{$_});
+    } elsif ((ref $env->{$_}) eq 'ARRAY') {
+      die unless (ref $envb->{$_}) eq 'ARRAY';
+      push $env->{$_},@{$envb->{$_}};
+    } else {
+      $env->{$_}=clone($envb->{$_});
+    }
+  }
+  return $env;
+}
 
 sub init {
-  &parseARGV(1,@_);
-  if ($help) {
-    &usage($help);
+  my $CLIenv=clone($defaultenv);
+  $CLIenv->{'auto'}=1;
+  $CLIenv->{'forget'}=0;
+  &parseARGV($CLIenv,@_);
+  if ($CLIenv->{'help'}) {
+    &usage($CLIenv->{'help'});
   }
-  $hashfile="$stem.md5";
-  &loadFiles;
-  if (!$forget && $#loadedopts > -1) {
-    &parseARGV(0,@loadedopts);
+  if ($#{$CLIenv->{'inputfile'}} == -1) {
+    print STDERR "No file specified\n";
+    &usage($CLIenv->{'usage'});
   }
-  # persistance
-  my $i=0;
-  foreach (@indexFile) {
-    &processIndexOption($_,$i,1);
-    $i++;
+  if ($#{$CLIenv->{'inputfile'}} > 0) {
+    print STDERR "Multiple files specified: ".join(' ',@$CLIenv->{'inputfile'})."\n";
+    &usage($CLIenv->{'usage'});
   }
-  foreach (@bibFile) {
-    &processBibOption($_,1);
+  foreach (@{$CLIenv->{inputfile}}) {
+    $_.='.tex' unless /\.tex$/;
+    if (!existFile($_)) {
+      s/\.tex$// if /\.tex$/;
+    }
+    if (existFile($_)) {
+      &initInputFile($CLIenv,$_);
+    } else {
+      die "Neither $_.tex nor $_ are readable!";
+    }
   }
+}
+
+sub initInputFile {
+  my $CLIenv=clone($_[0]); my $inputfile=''.$_[1];
+  my $env=clone($defaultenv);
+  &xlog(6,"Treating $inputfile\n");
   open FILE,$inputfile;
   my @infile=();
   while (<FILE>) {
@@ -76,104 +119,151 @@ sub init {
   }
   close FILE;
   if ($#infile != -1) {
-    parseARGV(0,@infile);
+    &parseARGV($env,@infile);
   }
-  # automatic mode
-  if ($auto<1) {
-    push @savedopts,'--manual';
-  } else {
-    if ($#indexFile==-1) {
-      &parseARGV(0,'--index');
-    }
-    if ($#bibFile==-1) {
-      &parseARGV(0,'--bibtex');
-    }
+  my $denv=&mergeEnvironments($env,$CLIenv);
+  my $stem;
+  if ($#{$denv->{'jobname'}} == -1) {
+    $stem=basename($inputfile,'.tex');
+    push $denv->{'jobname'},$stem;
   }
-  # treat options
-  foreach (@indexFile) {
-    &processIndexOption($_,$i,0);
-    $i++;
-  }
-  foreach (@bibFile) {
-    &processBibOption($_,0);
-  }
-  &loopCommands;
-  my %list;
-  if ($deps & 0x1) {
-    foreach (&outputDepends) {
-      $list{$_}=1;
-    }
-  }
-  if ($deps & 0x2) {
-    foreach (&outputOutputs) {
-      $list{$_}=1;
-    }
-  }
-  if ($deps & 0x4) {
-    foreach (&outputInternals) {
-      $list{$_}=1;
-    }
-  }
-  if ($deps) {
-    print join($inBetween,sort keys %list),"\n";
-    exit;
-  }
-  if ($makefilemode) {
-    &outputMakefile($makefilemode,$makefileprefix);
-  }
-  if ($gitignore) {
-    &outputGitignore;
-  }
-  exit;
-}
-sub processBibOption {
-  my ($_,$persistance)=@_;
-  my $cmdline=['bibtex',$_];
-  my $tagline=join(' ',@$cmdline);
-  my $key=&commandKey(@$cmdline);
-  if (!exists($includedopts{$key})) {
-    push @commands,{'proc' => \&pseudofileBib,
-                    'args' => {'input'=>$_,'autobib'=>2
-                              }};
-    push @commands,{'proc' => \&genericRunner,
-                    'args' => {'input'=>'pseudo://bib/'.$_,
-                               'tagline'=>$tagline,
-                               'cmdline'=>$cmdline,'autobib'=>1
-                              }};
-    if ($persistance) {
-      push @savedopts,'--bibtex-file',$_;
-    }
-    $includedopts{$key}=1;
-  }
-}
-sub processIndexOption {
-  my ($_,$i,$persistance)=@_;
-  my $cmdline=['makeindex'];
-  push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
-  push $cmdline,'-s',$indexStyle[$i] if (exists($indexStyle[$i]));
-  push $cmdline,@{$indexOptions[$i]} if (exists($indexOptions[$i]));
-  push $cmdline,$_;
-  my $tagline=join(' ',@$cmdline);
-  my $key=&commandKey(@$cmdline);
-  if (!exists($includedopts{$key})) {
-    push @commands,{'proc'=>\&genericRunner,
-                    'args'=>{'input'=>$_,
-                             'tagline'=>$tagline,
-                             'cmdline'=>$cmdline
-                            }
-                   };
-    if ($persistance) {
-      push @savedopts,'--index-file',$_;
-      push @savedopts,'--index-output',$indexOutput[$i] if (exists($indexOutput[$i]));
-      push @savedopts,'--index-style',$indexStyle[$i] if (exists($indexStyle[$i]));
-      if (exists($indexOptions[$i])) {
-        push @savedopts,'--index-options',@{$indexOptions[$i]};
-      }
-    }
-    $includedopts{$key}=1;
+  foreach $stem (@{$denv->{'jobname'}}) {
+    initStemFile($denv,$inputfile,$stem);
   }
 }
 
+sub initStemFile {
+  my $env=clone(shift @_);
+  my $inputfile=''.shift @_;
+  my $stem=''.shift @_;
+  &xlog(3,"Treating $stem out of $inputfile\n");
+}
+
+
+sub tii {
+  # $hashfile="$stem.md5";
+  # &loadFiles;
+  # if (!$forget && $#loadedopts > -1) {
+  #   &parseARGV($env,@loadedopts);
+  # }
+  # # persistance
+  # my $i=0;
+  # foreach (@indexFile) {
+  #   &processIndexOption($_,$i,1);
+  #   $i++;
+  # }
+  # foreach (@bibFile) {
+  #   &processBibOption($_,1);
+  # }
+  # open FILE,$inputfile;
+  # my @infile=();
+  # while (<FILE>) {
+  #   chomp;
+  #   next unless /^%+\s*compile-latex\s+option\s*:(.*$)/;
+  #   push @infile,$1;
+  # }
+  # close FILE;
+  # if ($#infile != -1) {
+  #   &parseARGV($env,@infile);
+  # }
+  # # automatic mode
+  # if ($auto<1) {
+  #   push @savedopts,'--manual';
+  # } else {
+  #   if ($#indexFile==-1) {
+  #     &parseARGV($env,'--index');
+  #   }
+  #   if ($#bibFile==-1) {
+  #     &parseARGV($env,'--bibtex');
+  #   }
+  # }
+  # # treat options
+  # foreach (@indexFile) {
+  #   &processIndexOption($_,$i,0);
+  #   $i++;
+  # }
+  # foreach (@bibFile) {
+  #   &processBibOption($_,0);
+  # }
+  # exit 0;
+  # &loopCommands;
+  # my %list;
+  # if ($deps & 0x1) {
+  #   foreach (&outputDepends) {
+  #     $list{$_}=1;
+  #   }
+  # }
+  # if ($deps & 0x2) {
+  #   foreach (&outputOutputs) {
+  #     $list{$_}=1;
+  #   }
+  # }
+  # if ($deps & 0x4) {
+  #   foreach (&outputInternals) {
+  #     $list{$_}=1;
+  #   }
+  # }
+  # if ($deps) {
+  #   print join($inBetween,sort keys %list),"\n";
+  #   exit;
+  # }
+  # if ($makefilemode) {
+  #   &outputMakefile($makefilemode,$makefileprefix);
+  # }
+  # if ($gitignore) {
+  #   &outputGitignore;
+  # }
+  # exit;
+}
+
+sub processBibOption {
+  # my ($_,$persistance)=@_;
+  # my $cmdline=['bibtex',$_];
+  # my $tagline=join(' ',@$cmdline);
+  # my $key=&commandKey(@$cmdline);
+  # if (!exists($includedopts{$key})) {
+  #   push @commands,{'proc' => \&pseudofileBib,
+  #                   'args' => {'input'=>$_,'autobib'=>2
+  #                             }};
+  #   push @commands,{'proc' => \&genericRunner,
+  #                   'args' => {'input'=>'pseudo://bib/'.$_,
+  #                              'tagline'=>$tagline,
+  #                              'cmdline'=>$cmdline,'autobib'=>1
+  #                             }};
+  #   if ($persistance) {
+  #     push @savedopts,'--bibtex-file',$_;
+  #   }
+  #   $includedopts{$key}=1;
+  # }
+}
+
+sub processIndexOption {
+  # my ($_,$i,$persistance)=@_;
+  # my $cmdline=['makeindex'];
+  # push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
+  # push $cmdline,'-s',$indexStyle[$i] if (exists($indexStyle[$i]));
+  # push $cmdline,@{$indexOptions[$i]} if (exists($indexOptions[$i]));
+  # push $cmdline,$_;
+  # my $tagline=join(' ',@$cmdline);
+  # my $key=&commandKey(@$cmdline);
+  # if (!exists($includedopts{$key})) {
+  #   push @commands,{'proc'=>\&genericRunner,
+  #                   'args'=>{'input'=>$_,
+  #                            'tagline'=>$tagline,
+  #                            'cmdline'=>$cmdline
+  #                           }
+  #                  };
+  #   if ($persistance) {
+  #     push @savedopts,'--index-file',$_;
+  #     push @savedopts,'--index-output',$indexOutput[$i] if (exists($indexOutput[$i]));
+  #     push @savedopts,'--index-style',$indexStyle[$i] if (exists($indexStyle[$i]));
+  #     if (exists($indexOptions[$i])) {
+  #       push @savedopts,'--index-options',@{$indexOptions[$i]};
+  #     }
+  #   }
+  #   $includedopts{$key}=1;
+  # }
+}
 sub pseudofileBib {
   my ($arg,$tmpdir)=@_;
   my $inputfile=$arg->{'input'};
@@ -225,6 +315,7 @@ sub pseudofileBib {
   return 0;
 }
 sub loopCommands {
+  my $auto;
   if ($auto) {
     unshift @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
   }
@@ -256,8 +347,8 @@ sub loopCommands {
 }
 sub parseARGV {
   my @args=();
-  my $forcefilename=shift @_;
-  my @lonearg=();
+  my $env=shift @_;
+  my $lonearg=[];
   my @loneopts=('--help','--force','--depends','--outputs','--quiet',
                 '--index','--forget','--man','--internals','--usage',
                 '--nroff','--bibtex','--manual','--auto','--gitignore',
@@ -266,7 +357,7 @@ sub parseARGV {
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
                '--input','--debug','--bibtex-file',
-               '--makefile','--makefile-prefix'
+               '--makefile','--makefile-prefix','--jobname',
               );
   my $m;
  ARGS: while ($#_>-1) {
@@ -284,18 +375,14 @@ sub parseARGV {
         next ARGS;
       }
     }
-    push @lonearg,$_;
+    push $lonearg,$_;
   }
-  if ($#lonearg>0) {
-    shift @lonearg;
-    print STDERR "Unknown options ",join(', ',@lonearg),"\n";
-    &usage;
-  }
-  if ($#lonearg==0 && $forcefilename == 1) {
-    &setStem(&unquote($lonearg[0]),0);
-  }
+  $env->{'inputfile'}=clone($lonearg);
+  my $index=-1;
+  my $bib=-1;
   foreach (@args) {
     my $arg=${$_}[0];
+    my $val=${$_}[1];
     if ($arg eq '--help') {
       $help="help";
     } elsif ($arg eq '--man') {
@@ -305,13 +392,11 @@ sub parseARGV {
     } elsif ($arg eq '--usage') {
       $help="usage";
     } elsif ($arg eq '--forget') {
-      $forget=1;
-    } elsif ($arg eq '--force') {
-      $forcenext=1;
+      $env->{'forget'}=1;
     } elsif ($arg eq '--auto') {
-      $auto++;
+      $env->{'auto'}=1;
     } elsif ($arg eq '--manual') {
-      $auto--;
+      $env->{'auto'}=0;
     } elsif ($arg eq '--depends') {
       $debug=0;
       $deps=$deps|0x1;
@@ -326,41 +411,45 @@ sub parseARGV {
     } elsif ($arg eq '--make') {
       $makefilemode='Makefile';
     } elsif ($arg eq '--makefile') {
-      $makefilemode=${$_}[1];
+      $makefilemode=$val;
     } elsif ($arg eq '--makefile-prefix') {
-      $makefileprefix=${$_}[1];
+      $makefileprefix=$val;
     } elsif ($arg eq '--quiet') {
       $debug=0;
     } elsif ($arg eq '--debug') {
-      $debug=int(${$_}[1]);
+      $debug=int($val);
     } elsif ($arg eq '--separator') {
-      $inBetween=&unquote(${$_}[1]);
-    } elsif ($arg eq '--index') {
-      push @indexFile,"$stem.idx";
+      $inBetween=&unquote($val);
+    } elsif ($arg eq '--jobname') {
+      push $env->{'jobname'},$val;
     } elsif ($arg eq '--bibtex') {
-      push @bibFile,"$stem.aux";
-    } elsif ($arg eq '--index-file') {
-      push @indexFile,${$_}[1];
+      $env->{'bibFileSuffix'}->[++$bib]='.aux';
+    } elsif ($arg eq '--bibtex-file-suffix') {
+      $env->{'bibFileSuffix'}->[++$bib]='.'.$val;
     } elsif ($arg eq '--bibtex-file') {
-      push @bibFile,${$_}[1];
+      $env->{'bibFile'}->[++$bib]=$val;
+    } elsif ($arg eq '--index') {
+      $env->{'indexFileSuffix'}->[++$index]='.idx';
     } elsif ($arg eq '--index-file-suffix') {
-      push @indexFile,$stem.'.'.${$_}[1];
+      $env->{'indexFileSuffix'}->[++$index]='.'.$val;
+    } elsif ($arg eq '--index-file') {
+      $env->{'indexFile'}->[++$index]=$val;
     } elsif ($arg eq '--index-output-suffix') {
-      $indexOutput[$#indexFile]=$stem.'.'.${$_}[1];
-    } elsif ($arg eq '--index-options') {
-      die "No index-file yet!" if ($#indexFile == -1);
-      $indexOptions[$#indexFile]=[map {&unquote($_)} split(/ /,${$_}[1])];
-    } elsif ($arg eq '--index-style') {
-      die "No index-file yet!" if ($#indexFile == -1);
-      $indexStyle[$#indexFile]=&unquote(${$_}[1]);
+      die "No index-file yet!" if ($index == -1);
+      $env->{'indexOutputSuffix'}->[$index]='.'.$val;
     } elsif ($arg eq '--index-output') {
-      die "No index-file yet!" if ($#indexFile == -1);
-      $indexOutput[$#indexFile]=&unquote(${$_}[1]);
+      die "No index-file yet!" if ($index == -1);
+      $env->{'indexOutput'}->[$index]='.'.$val;
+    } elsif ($arg eq '--index-style-suffix') {
+      die "No index-file yet!" if ($index == -1);
+      $env->{'indexStyleSuffix'}->[$index]='.'.$val;
+    } elsif ($arg eq '--index-style') {
+      die "No index-file yet!" if ($index == -1);
+      $env->{'indexStyle'}->[$index]=$val;
+    } elsif ($arg eq '--index-options') {
+      die "No index-file yet!" if ($index == -1);
+      $env->{'indexOptions'}->[$index]=[map {&unquote($_)} split(/ /,$val)];
     }
-  }
-  if ($#lonearg==-1 && $forcefilename == 1 && !$help) {
-    print STDERR "No file specified\n";
-    &usage;
   }
 }
 
@@ -668,7 +757,7 @@ sub usage {
     ($a,$out,$b)=@{&executeCommand("","pod2text","$0")};
   }
   if ($option eq "usage") {
-    $out =~ s/DESCRIPTION.*$//s;
+    $out =~ s/OPTIONS.*$//s;
   }
   print $out;
   exit;
@@ -800,21 +889,7 @@ sub quote {
   $d=~s/\n/%0A/g;
   return $d;
 }
-sub setStem {
-  my ($s,$extended)=@_;
-  $inputfile=$s;
-  $inputfile.='.tex' unless ($s =~ /\.tex$/ xor $extended);
-  if (! -r $inputfile || -d $inputfile) {
-    if (!$extended) {
-      setStem($s,1);
-    } else {
-      die "$s: not readable file";
-    }
-  }
-  $stem=$inputfile;
-  $stem=~s/\.tex$//g;
-  return;
-}
+
 sub commandKey {
   my $d=join(' ',map {&quote($_)} @_);
   return $d;
