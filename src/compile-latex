@@ -38,23 +38,6 @@ my $defaultenv={
                 'bibFileSuffix'    =>[],
                };
 
-# These variables are specific to one run, and should be put in some
-# sort of loop.
-
-my %cruftout=();
-my %cruftin=();
-my @commands=();
-my @savedopts=();
-my @loadedopts=();
-my @bib=();
-my %pseudofile=();
-my %includedopts=();
-my ($hash,$oldhash,$in,$out,$oldin,$oldout)=({},{},{},{},{},{});
-my $round=0;
-my $mainkey='';
-my ($inputfile,$stem,$hashfile,$outputFile);
-$stem=undef;
-
 # launch
 
 &init(@ARGV);
@@ -136,9 +119,51 @@ sub initStemFile {
   my $env=clone(shift @_);
   my $inputfile=''.shift @_;
   my $stem=''.shift @_;
-  &xlog(3,"Treating $stem out of $inputfile\n");
+  my $hashfile="$stem.md5";
+  &xlog(2,"▲ Processing $stem out of $inputfile\n");
+  my $hashenv=clone($defaultenv);
+  $hashenv->{'cruftin'}={};
+  $hashenv->{'cruftout'}={};
+  $hashenv->{'oldin'}={};
+  $hashenv->{'oldout'}={};
+  $hashenv->{'in'}={};
+  $hashenv->{'out'}={};
+  $hashenv->{'hash'}={};
+  $hashenv->{'stem'}=$stem;
+  $hashenv->{'hashfile'}=$hashfile;
+  $hashenv->{'input'}=$inputfile;
+  &loadFiles($hashenv,$hashfile);
+  # TODO: persistance
+  # TODO: forget
+  my $fullenv=mergeEnvironments($env,$hashenv);
+  &loopCommands($fullenv);
+  my %list;
+  if ($deps & 0x1) {
+    foreach (&outputDepends($fullenv)) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps & 0x2) {
+    foreach (&outputOutputs($fullenv)) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps & 0x4) {
+    foreach (&outputInternals($fullenv)) {
+      $list{$_}=1;
+    }
+  }
+  if ($deps) {
+    print join($inBetween,sort keys %list),"\n";
+    exit;
+  }
+  if ($makefilemode) {
+    &outputMakefile($fullenv,$makefilemode,$makefileprefix);
+  }
+  if ($gitignore) {
+    &outputGitignore($fullenv);
+  }
 }
-
 
 sub tii {
   # $hashfile="$stem.md5";
@@ -185,35 +210,7 @@ sub tii {
   # foreach (@bibFile) {
   #   &processBibOption($_,0);
   # }
-  # exit 0;
   # &loopCommands;
-  # my %list;
-  # if ($deps & 0x1) {
-  #   foreach (&outputDepends) {
-  #     $list{$_}=1;
-  #   }
-  # }
-  # if ($deps & 0x2) {
-  #   foreach (&outputOutputs) {
-  #     $list{$_}=1;
-  #   }
-  # }
-  # if ($deps & 0x4) {
-  #   foreach (&outputInternals) {
-  #     $list{$_}=1;
-  #   }
-  # }
-  # if ($deps) {
-  #   print join($inBetween,sort keys %list),"\n";
-  #   exit;
-  # }
-  # if ($makefilemode) {
-  #   &outputMakefile($makefilemode,$makefileprefix);
-  # }
-  # if ($gitignore) {
-  #   &outputGitignore;
-  # }
-  # exit;
 }
 
 sub processBibOption {
@@ -264,8 +261,13 @@ sub processIndexOption {
   #   $includedopts{$key}=1;
   # }
 }
+
 sub pseudofileBib {
-  my ($arg,$tmpdir)=@_;
+  my ($env,$arg,$tmpdir)=@_;
+  my $out=$env->{'out'};
+  my $in=$env->{'in'};
+  my %pseudofile=%{$env->{'pseudofile'}};
+  my $hash=$env->{'hash'};
   my $inputfile=$arg->{'input'};
   my $outputfile='pseudo://bib/'.$inputfile;
   my $key="pseudofileBib ".&quote($inputfile);
@@ -308,26 +310,28 @@ sub pseudofileBib {
   }
   foreach (keys %{$in->{$key}}) {
     if (!exists($hash->{$_})) {
-      &hashFile($_,$hash);
+      &hashFile($_,$env);
     }
     $in->{$key}->{$_}=$hash->{$_};
   }
   return 0;
 }
+
 sub loopCommands {
-  my $auto;
-  if ($auto) {
-    unshift @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
-  }
+  my $env=shift @_;
+  # prologue: establish list of commands
+  my @commands=();
+  my $stem=$env->{'stem'};
+#  unshift @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
   unshift @commands,{'proc' => \&latexFile,'args' => {}};
   unshift @commands,{'proc' => \&newRound,'args' => {}};
   # Do something more
-  push @commands,{'proc' => \&storeCruft,'args' => {}};
-  push @commands,{'proc' => \&storeFiles,'args' => {}};
+#  push @commands,{'proc' => \&storeCruft,'args' => {}};
+#  push @commands,{'proc' => \&storeFiles,'args' => {}};
   opendir (my $dh,'.') || die "Could not open current directory: $!";
   while (readdir($dh)) {
     next unless /^${stem}\./;
-    hashFile($_,$hash);
+    hashFile($_,$env);
   }
   closedir($dh);
   my $commandindex=-1;
@@ -340,11 +344,12 @@ sub loopCommands {
       $i++;
       my $comm=$commands[$i];
       my $func=$comm->{'proc'};
-      my $ret=&$func($comm->{'args'},$tmpdir);
+      my $ret=&$func($env,$comm->{'args'},$tmpdir);
       $commandredo=1 unless ($ret);
     }
   }
 }
+
 sub parseARGV {
   my @args=();
   my $env=shift @_;
@@ -454,91 +459,92 @@ sub parseARGV {
 }
 
 sub loadFiles {
-  my ($arg,$tmpdir)=@_;
+  my ($env)=@_;
   &xlog(3,"▲ Loading hashes\n");
-  open FILE,"$hashfile" or return;
+  open FILE,$env->{'hashfile'} or return;
   while (<FILE>) {
     chomp;
     next unless /^([a-z]+);([^;]*);([^;]*);(.*)$/;
     my ($t,$p,$v,$f)=($1,$2,$3,$4);
     if ($t eq 'in') {
-      $in->{$p}={} unless (exists($in->{$p}));
-      $in->{$p}->{$f}=$v;
+      $env->{'in'}->{$p}={} unless (exists($env->{'in'}->{$p}));
+      $env->{'in'}->{$p}->{$f}=$v;
     }
     if ($t eq 'out') {
-      $out->{$p}={} unless (exists($out->{$p}));
-      $out->{$p}->{$f}=$v;
-    }
-    if ($t eq 'option') {
-      push @loadedopts,&unquote($p);
+      $env->{'out'}->{$p}={} unless (exists($env->{'out'}->{$p}));
+      $env->{'out'}->{$p}->{$f}=$v;
     }
     if ($t eq 'pseudofile') {
-      $pseudofile{&unquote($v)}=&unquote($p);
+      $env->{'pseudofile'}->{&unquote($v)}=&unquote($p);
     }
     if ($t eq 'mainkey') {
-      $mainkey=&unquote($p);
+      $env->{'mainkey'}=&unquote($p);
     }
     if ($t eq 'outputfile') {
-      $outputFile=&unquote($p);
+      $env->{'outputFile'}=&unquote($p);
     }
     if ($t eq 'cruftin') {
-      $cruftin{$p}=1;
+      $env->{'cruftin'}->{$p}=1;
     }
     if ($t eq 'cruftout') {
-      $cruftout{$p}=1;
+      $env->{'cruftout'}->{$p}=1;
     }
   }
   close FILE;
   return 1;
 }
+
 sub newRound {
-  my ($arg,$tmpdir)=@_;
-  $round++;
-  &xlog(2,"▲ Round $round\n");
-  $oldhash=$hash;
-  $oldin=$in;
-  $oldout=$out;
-  $in={};
-  $out={};
+  my $env=shift @_;
+  $env->{'round'}++;
+  &xlog(2,"▲ Round ".$env->{'round'}."\n");
+  $env->{'oldin'}=$env->{'in'};
+  $env->{'oldout'}=$env->{'out'};
+  $env->{'in'}={};
+  $env->{'out'}={};
   return 1;
 }
+
 sub autoDiscovery {
-  return 1 if ($round > 1);
-  my $tagline=("Auto-discovery");
-  &xlog(2,"△ $tagline...");
-  &xlog(2,"ok\n");
-  foreach my $file (keys %{$out->{$mainkey}}) {
-    next unless existFile($file);
-    open FILE,$file;
-    my $bib=0;
-    while (<FILE>) {
-      if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
-        $bib=1;next;
-      } else {
-        $bib=0;last;
-      }
-    }
-    close FILE;
-    if ($bib) {
-      &xlog(5,"Spotted...$file",'');
-      my $a=pop @commands;
-      my $b=pop @commands;
-      processBibOption($file,0);
-      push @commands,$b,$a;
-    }
-  }
-  return 1;
+  # return 1 if ($round > 1);
+  # my $tagline=("Auto-discovery");
+  # &xlog(2,"△ $tagline...");
+  # &xlog(2,"ok\n");
+  # foreach my $file (keys %{$out->{$mainkey}}) {
+  #   next unless existFile($file);
+  #   open FILE,$file;
+  #   my $bib=0;
+  #   while (<FILE>) {
+  #     if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
+  #       $bib=1;next;
+  #     } else {
+  #       $bib=0;last;
+  #     }
+  #   }
+  #   close FILE;
+  #   if ($bib) {
+  #     &xlog(5,"Spotted...$file",'');
+  #     my $a=pop @commands;
+  #     my $b=pop @commands;
+  #     processBibOption($file,0);
+  #     push @commands,$b,$a;
+  #   }
+  # }
+  # return 1;
 }
+
 sub latexFile {
-  my ($arg,$tmpdir)=@_;
+  my ($env,$arg,$tmpdir)=@_;
   my $tmpfile=File::Spec->catfile($tmpdir,"trace");
   my @cmdline=('pdflatex','-interaction','batchmode','-halt-on-error',
-               $inputfile);
-  my $tagline=("pdflatex $inputfile");
-  $outputFile=$stem.'.pdf';
+               '--jobname',$env->{'stem'},
+               $env->{'input'});
+  my $tagline=("pdflatex ".$env->{'input'});
+  $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   my $key=&commandKey(@cmdline);
-  $mainkey=$key;
-  &forceDependency($key,$inputfile);
+  my $mainkey=$key;
+  $env->{'mainkey'}=$key;
+  &forceDependency($env,$key,$env->{'input'});
   my @changed=&preMortem($key);
   if ($#changed==-1) {
     # Necessary only for debug
@@ -567,149 +573,158 @@ sub latexFile {
   &postMortem($key,$tmpfile);
   return 0;
 }
+
 sub genericRunner {
-  my ($arg,$tmpdir)=@_;
-  my $input=$arg->{'input'};
-  my $tmpfile=File::Spec->catfile($tmpdir,"trace");
-  my @cmdline=@{$arg->{'cmdline'}};
-  my $tagline=$arg->{'tagline'};
-  my $key=&commandKey(@cmdline);
-  &forceDependency($key,$input);
-  my @changed=&preMortem($key);
-  if ($#changed==-1 || ($hash->{$input} eq "0")) {
-    # Necessary only for debug
-    &xlog(3,"▲ $tagline...done\n");
-    &postVitam($key);
-    return 1;
-  } elsif ($#changed < 5) {
-    &xlog(2,'Changed: ',join(' ',@changed),'');
-  } else {
-    &xlog(2,'Changed: ',$#changed,' files','');
-    &xlog(6,'Changed: ',join(' ',@changed),'');
-  }
-  &xlog(1,"△ $tagline...");
-  $a=executeCommand('',
-                    'strace','-f','-e','trace=access,open',
-                    '-o',$tmpfile,
-                    @cmdline
-                   );
-  if ($a->[0] == 0) {
-    &xlog(1,"ok\n");
-  } else {
-    &xlog(1,"fail\n");
-    die "Argh";
-  }
-  &postMortem($key,$tmpfile);
-  $in->{$key}->{$input}=$hash->{$input};
-  return 0;
+  # my ($arg,$tmpdir)=@_;
+  # my $input=$arg->{'input'};
+  # my $tmpfile=File::Spec->catfile($tmpdir,"trace");
+  # my @cmdline=@{$arg->{'cmdline'}};
+  # my $tagline=$arg->{'tagline'};
+  # my $key=&commandKey(@cmdline);
+  # &forceDependency($key,$input);
+  # my @changed=&preMortem($key);
+  # if ($#changed==-1 || ($hash->{$input} eq "0")) {
+  #   # Necessary only for debug
+  #   &xlog(3,"▲ $tagline...done\n");
+  #   &postVitam($key);
+  #   return 1;
+  # } elsif ($#changed < 5) {
+  #   &xlog(2,'Changed: ',join(' ',@changed),'');
+  # } else {
+  #   &xlog(2,'Changed: ',$#changed,' files','');
+  #   &xlog(6,'Changed: ',join(' ',@changed),'');
+  # }
+  # &xlog(1,"△ $tagline...");
+  # $a=executeCommand('',
+  #                   'strace','-f','-e','trace=access,open',
+  #                   '-o',$tmpfile,
+  #                   @cmdline
+  #                  );
+  # if ($a->[0] == 0) {
+  #   &xlog(1,"ok\n");
+  # } else {
+  #   &xlog(1,"fail\n");
+  #   die "Argh";
+  # }
+  # &postMortem($key,$tmpfile);
+  # $in->{$key}->{$input}=$hash->{$input};
+  # return 0;
 }
+
 sub storeCruft {
-  &xlog(2,"▲ Storing modified files\n");
-  $out->{'storeFiles'}={$hashfile=>1};
-  foreach my $prog (sort keys %$out) {
-    foreach (sort keys %{$out->{$prog}}) {
-      next if /^pseudo:\/\//;
-      $cruftout{$_}=1;
-    }
-  }
-  foreach my $prog (sort keys %$in) {
-    foreach (sort keys %{$in->{$prog}}) {
-      next if /^pseudo:\/\//;
-      next unless &existFile($_);
-      $cruftin{$_}=1;
-    }
-  }
-  return 1;
+  # &xlog(2,"▲ Storing modified files\n");
+  # $out->{'storeFiles'}={$hashfile=>1};
+  # foreach my $prog (sort keys %$out) {
+  #   foreach (sort keys %{$out->{$prog}}) {
+  #     next if /^pseudo:\/\//;
+  #     $cruftout{$_}=1;
+  #   }
+  # }
+  # foreach my $prog (sort keys %$in) {
+  #   foreach (sort keys %{$in->{$prog}}) {
+  #     next if /^pseudo:\/\//;
+  #     next unless &existFile($_);
+  #     $cruftin{$_}=1;
+  #   }
+  # }
+  # return 1;
 }
+
 sub storeFiles {
-  my ($arg,$tmpdir)=@_;
-  my $v;
-  &xlog(2,"▲ Storing hashes\n");
-  open FILE,">$hashfile";
-  foreach my $prog (sort keys %$in) {
-    foreach my $key (sort keys %{$in->{$prog}}) {
-      $v=$in->{$prog}->{$key};
-      print FILE "in;$prog;$v;$key\n";
-    }
-  }
-  foreach my $prog (sort keys %$out) {
-    foreach my $key (sort keys %{$out->{$prog}}) {
-      $v=$out->{$prog}->{$key};
-      print FILE "out;$prog;$v;$key\n";
-    }
-  }
-  foreach my $opt (@savedopts) {
-    print FILE "option;",&quote($opt),";1;\n";
-  }
-  foreach my $opt (keys %pseudofile) {
-    print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
-  }
-  foreach my $opt (keys %cruftin) {
-    print FILE "cruftin;",&quote($opt),";;\n";
-  }
-  foreach my $opt (keys %cruftout) {
-    print FILE "cruftout;",&quote($opt),";;\n";
-  }
-  print FILE "mainkey;",&quote($mainkey),";;\n";
-  print FILE "outputfile;",&quote($outputFile),";;\n";
-  close FILE;
-  return 1;
+  # my ($arg,$tmpdir)=@_;
+  # my $v;
+  # &xlog(2,"▲ Storing hashes\n");
+  # open FILE,">$hashfile";
+  # foreach my $prog (sort keys %$in) {
+  #   foreach my $key (sort keys %{$in->{$prog}}) {
+  #     $v=$in->{$prog}->{$key};
+  #     print FILE "in;$prog;$v;$key\n";
+  #   }
+  # }
+  # foreach my $prog (sort keys %$out) {
+  #   foreach my $key (sort keys %{$out->{$prog}}) {
+  #     $v=$out->{$prog}->{$key};
+  #     print FILE "out;$prog;$v;$key\n";
+  #   }
+  # }
+  # foreach my $opt (@savedopts) {
+  #   print FILE "option;",&quote($opt),";1;\n";
+  # }
+  # foreach my $opt (keys %pseudofile) {
+  #   print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
+  # }
+  # foreach my $opt (keys %cruftin) {
+  #   print FILE "cruftin;",&quote($opt),";;\n";
+  # }
+  # foreach my $opt (keys %cruftout) {
+  #   print FILE "cruftout;",&quote($opt),";;\n";
+  # }
+  # print FILE "mainkey;",&quote($mainkey),";;\n";
+  # print FILE "outputfile;",&quote($outputFile),";;\n";
+  # close FILE;
+  # return 1;
 }
 
 sub postVitam {
-  my ($key)=@_;
-  $in->{$key}=&clone($oldin->{$key});
-  $out->{$key}=&clone($oldout->{$key});
-  foreach (keys %{$out->{$key}}) {
-    if (!exists($hash->{$_})) {
-      $hash->{$_}="?";
+  my ($env,$key)=@_;
+  $env->{'in'}->{$key}=clone($env->{'oldin'}->{$key});
+  $env->{'out'}->{$key}=clone($env->{'oldout'}->{$key});
+  foreach (keys %{$env->{'out'}->{$key}}) {
+    if (!exists($env->{'hash'}->{$_})) {
+      $env->{'hash'}->{$_}="?";
     }
   }
 }
+
 sub postMortem {
-  my ($key,$tmpfile)=@_;
+  my ($env,$key,$tmpfile)=@_;
   open TRACE,"$tmpfile";
   while (<TRACE>) {
     if (/^[0-9]+\s+access\("([^"]*)",.R_OK\)\s*=\s*[-0-9]*/) {
       my $file=$1;
       $file =~ s/^\.\///g;
-      $in->{$key}->{$file}="1";
+      $env->{'in'}->{$key}->{$file}="1";
       next;
     }
     if (/^[0-9]+\s+open\("([^"]*)",.O_WRONLY.*\)\s*=\s*[-0-9]*$/) {
       my $file=$1;
       $file =~ s/^\.\///g;
-      $out->{$key}->{$file}="1";
+      $env->{'out'}->{$key}->{$file}="1";
       next;
     }
   }
   close TRACE;
   unlink $tmpfile;
   # Update hash
-  foreach (keys %{$out->{$key}}) {
-    if (!exists($hash->{$_})) {
-      $hash->{$_}="?";
+  foreach (keys %{$env->{'out'}->{$key}}) {
+    if (!exists($env->{'hash'}->{$_})) {
+      $env->{'hash'}->{$_}="?";
     }
   }
-  foreach (keys %{$in->{$key}}) {
-    if (!exists($hash->{$_})) {
-      &hashFile($_,$hash);
+  foreach (keys %{$env->{'in'}->{$key}}) {
+    if (!exists($env->{'hash'}->{$_})) {
+      &hashFile($_,$env);
     }
-    $in->{$key}->{$_}=$hash->{$_};
+    $env->{'in'}->{$key}->{$_}=$env->{'hash'}->{$_};
   }
 }
+
 sub forceDependency {
-  my ($key,$file)=@_;
-  if (!exists($oldin->{$key})) {
-    $oldin->{$key}={};
+  my ($env,$key,$file)=@_;
+  if (!exists($env->{'oldin'}->{$key})) {
+    $env->{'oldin'}->{$key}={};
   }
   return unless existFile($file);
-  if (!exists($oldin->{$key}->{$file})) {
-    $oldin->{$key}->{$file}="1";
+  if (!exists($env->{'oldin'}->{$key}->{$file})) {
+    $env->{'oldin'}->{$key}->{$file}="1";
   }
 }
+
 sub preMortem {
-  my ($key)=@_;
+  my ($env,$key)=@_;
+  my $oldin=$env->{'oldin'};
+  my $oldout=$env->{'oldout'};
+  my $hash=$env->{'hash'};
   my $changed=0;
   my @changed=();
   if (!exists($oldin->{$key})) {
@@ -762,7 +777,11 @@ sub usage {
   print $out;
   exit;
 }
+
 sub outputDepends {
+  my $env=shift @_;
+  my %cruftin=%{$env->{'cruftin'}};
+  my %cruftout=%{$env->{'cruftout'}};
   my %list=();
   foreach (sort keys %cruftin) {
     next if exists $cruftout{$_};
@@ -771,7 +790,11 @@ sub outputDepends {
   }
   return keys %list;
 }
+
 sub outputOutputs {
+  my $env=shift @_;
+  my %cruftin=%{$env->{'cruftin'}};
+  my %cruftout=%{$env->{'cruftout'}};
   my %list=();
   foreach (sort keys %cruftout) {
     next if exists $cruftin{$_};
@@ -780,7 +803,11 @@ sub outputOutputs {
   }
   return keys %list;
 }
+
 sub outputInternals {
+  my $env=shift @_;
+  my %cruftin=%{$env->{'cruftin'}};
+  my %cruftout=%{$env->{'cruftout'}};
   my %list=();
   foreach (sort keys %cruftout) {
     next unless exists $cruftin{$_};
@@ -833,44 +860,48 @@ sub outputSection {
 }
 
 sub outputMakefile {
-  my ($file,$pref)=@_;
+  my @savedopts=(); # TODO
+  my ($env,$file,$pref)=@_;
+  my $stem=$env->{'stem'};
   &outputSection($file,'//common',"COMPILELATEX ?= compile-latex\n".
                  "${pref}all::\n".
                  ".PHONY: ${pref}do ${pref}depends ${pref}distclean ${pref}clean ${pref}all\n"
                 );
 
   my $snip='';
-  $snip.="${pref}all:: $outputFile\n";
+  $snip.="${pref}all:: ".$env->{'outputFile'}."\n";
   $snip.="${pref}do::\n";
   $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
-  $snip.=join(' ',&outputOutputs).":\\\n".join("\\\n",&outputDepends)."\n";
+  $snip.=join(' ',&outputOutputs($env)).
+    ":\\\n".join("\\\n",&outputDepends($env))."\n";
   $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
   $snip.="${pref}distclean::\n";
   my %list=();
-  foreach (&outputInternals,&outputOutputs) {
+  foreach (&outputInternals($env),&outputOutputs($env)) {
     $list{$_}++;
   }
   $snip.="\trm -f ".join(' ',sort keys %list)."\n";
   $snip.="${pref}clean::\n";
-  delete ($list{$outputFile});
+  delete ($list{$env->{'outputFile'}});
   $snip.="\trm -f ".join(' ',sort keys %list)."\n"; 
   $snip.="${pref}depends::\n";
   $snip.="\t\$(COMPILELATEX)";
   $snip.=' --gitignore' if ($gitignore);
   $snip.=" --makefile-prefix $pref" if ($pref);
-  $snip.=" --makefile '$file' $inputfile\n";
-  &outputSection($file,$inputfile,$snip);
+  $snip.=" --makefile '$file' ".$env->{'input'}."\n";
+  &outputSection($file,$env->{'stem'},$snip);
 }
+
 sub outputGitignore {
-  my ($file,$snip)=('.gitignore','');
+  my ($env,$file,$snip)=('.gitignore','');
   my %list=();
-  foreach (&outputInternals,&outputOutputs) {
+  foreach (&outputInternals($env),&outputOutputs($env)) {
     $list{$_}++;
   }
   foreach (sort keys %list) {
     $snip.="/$_\n";
   }
-  &outputSection($file,$inputfile,$snip);
+  &outputSection($file,$env->{'input'},$snip);
 }
 
 sub unquote {
@@ -915,6 +946,7 @@ sub executeCommand {
   } until ($done>0);
   return [ $?, $outputtext, $errtext ];
 }
+
 sub existFile {
   my ($f)=@_;
   if ($f =~ /^pseudo:\/\//) {
@@ -923,14 +955,15 @@ sub existFile {
   return 0 if -d $f;
   return -r $f;
 }
+
 sub hashFile {
-  my ($f,$hash)=@_;
-  $hash->{$f}="0";
+  my ($f,$env)=@_;
+  $env->{'hash'}->{$f}="0";
   if ($f =~ /^pseudo:\/\//) {
-    return if (!exists $pseudofile{$f});
+    return if (!exists $env->{'pseudofile'}->{$f});
     my $hashing = Digest::MD5->new;
-    $hashing->add($pseudofile{$f});
-    $hash->{$f}=$hashing->hexdigest;
+    $hashing->add($env->{'pseudofile'}->{$f});
+    $env->{'hash'}->{$f}=$hashing->hexdigest;
     return;
   }
   return "0" if (-d $f);
@@ -938,12 +971,14 @@ sub hashFile {
   open FILE,"$f" or return "0";
   my $hashing = Digest::MD5->new;
   $hashing->addfile(*FILE);
-  $hash->{$f}=$hashing->hexdigest;
+  $env->{'hash'}->{$f}=$hashing->hexdigest;
   close FILE;
 }
+
 sub hashArray {
+  my $env=shift @_;
   foreach (@_) {
-    &hashFile($_,$hash);
+    &hashFile($_,$env);
   }
 }
 
@@ -953,27 +988,6 @@ sub xlog {
   print join("\n",@_) unless ($level>$debug);
 }
 
-# $old* is cloned at the round begin from the old ones
-# just before a command, compute hash and compare for all the $oldin
-# just after a command, register $in, $out, and update hashes for all $out
-# Main algorithm:
-# - commandok = 0
-# - BEGIN
-# - new round
-# - ensure $output of the command is in $oldin
-# - compare for all keys of $oldin $hash and $oldin->prog->key
-# - If one differs and some running criteria are met (existence of some input file?):
-# - - run the command
-# - - read $in and $out for the command
-# - - update (force rereading) of $hashes for all keys of $out
-# - - commandcount = 0
-# - else
-# - - command would do the same thing
-# - - copy $oldin, $oldout to $in and $out
-# - - copy $oldhashes to $hashes for all keys of $out
-# - - commandcount++
-# - pass to next command
-# - when no more commands, goto BEGIN
 
 # command = { 'proc' -> \&toto, 'args' -> {} } and returns 0 (to be redone) or 1 (not to be redone)
 # command = { 'proc' -> \&genericRunner, 'args' -> {'in'=>$input,'tagline'=>$tagline,'cmdline'=>['some','prog','with','options'] }} and returns 0 (to be redone) or 1 (not to be redone)
