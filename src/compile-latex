@@ -112,6 +112,7 @@ sub initStemFile {
   $hashenv->{'out'}={};
   $hashenv->{'hash'}={};
   $hashenv->{'pseudofile'}={};
+  $hashenv->{'commands'}=[];
   $hashenv->{'stem'}=$stem;
   $hashenv->{'hashfile'}=$hashfile;
   $hashenv->{'input'}=$inputfile;
@@ -271,7 +272,6 @@ sub parseARGV {
 sub processBibOption {
   my $env=shift @_;
   my $stem=$env->{'stem'};
-  my $commands=[];
   my %uniq=();
   my $k;
   foreach $k (keys %{$env->{'bibFile'}}) {
@@ -279,16 +279,17 @@ sub processBibOption {
     $uniq{$k}="1";
   }
   foreach $k (sort keys %uniq) {
-    print STDERR $k,"\n";
-    push $commands,{'proc' => \&pseudofileBib,
-                    'args' => {'input'=>$k,'autobib'=>2}
-                   };
-    push $commands,{'proc' => \&genericRunner,
-                    'args' => {'input'=>'pseudo://bib/'.$k,
-                               'tagline'=>$tagline,
-                               'cmdline'=>$cmdline,
-                               'autobib'=>1}
-                   };
+    my $cmdline=['bibtex',$k];
+    my $tagline=join(' ',@$cmdline);
+    push $env->{'commands'},{'proc' => \&pseudofileBib,
+                             'args' => {'input'=>$k,'autobib'=>2}
+                            };
+    push $env->{'commands'},{'proc' => \&genericRunner,
+                             'args' => {'input'=>'pseudo://bib/'.$k,
+                                        'tagline'=>$tagline,
+                                        'cmdline'=>$cmdline,
+                                        'autobib'=>1}
+                            };
   }
 }
 
@@ -321,21 +322,21 @@ sub processIndexOption {
 }
 
 sub pseudofileBib {
+  my $_;
   my ($env,$arg,$tmpdir)=@_;
   my $out=$env->{'out'};
   my $in=$env->{'in'};
-  my %pseudofile=%{$env->{'pseudofile'}};
   my $hash=$env->{'hash'};
   my $inputfile=$arg->{'input'};
   my $outputfile='pseudo://bib/'.$inputfile;
   my $key="pseudofileBib ".&quote($inputfile);
   my $tagline="Extracting bibliography from $inputfile";
-  &forceDependency($key,$inputfile);
+  &forceDependency($env,$key,$inputfile);
   my @changed=&preMortem($env,$key);
   if ($#changed==-1) {
     # Necessary only for debug
     &xlog(3,"▲ $tagline...done\n");
-    &postVitam($key);
+    &postVitam($env,$key);
     return 1;
   } elsif ($#changed < 5) {
     &xlog(2,'Changed: ',join(' ',@changed),'');
@@ -357,9 +358,9 @@ sub pseudofileBib {
   $out->{$key}->{$outputfile}="1";
   $in->{$key}->{$inputfile}="1";
   if ($data eq '') {
-    delete $pseudofile{$outputfile};
+    delete $env->{'pseudofile'}->{$outputfile};
   } else {
-    $pseudofile{$outputfile}=$data;
+    $env->{'pseudofile'}->{$outputfile}=$data;
   }
   foreach (keys %{$out->{$key}}) {
     if (!exists($hash->{$_})) {
@@ -382,9 +383,10 @@ sub loopCommands {
   push @commands,{'proc' => \&newRound,'args' => {}};
   push @commands,{'proc' => \&latexFile,'args' => {}};
   push @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
+  push @commands,@{$env->{'commands'}};
   # TODO here, insert bibtex and makeindex
-  push @commands,{'proc' => \&storeCruft,'args' => {}};
-  push @commands,{'proc' => \&storeFiles,'args' => {}};
+  push @commands,{'proc' => \&storeCruft,'args' => {},'keepatend'=>1};
+  push @commands,{'proc' => \&storeFiles,'args' => {},'keepatend'=>1};
   # Heuristic: anticipating the input files
   opendir (my $dh,'.') || die "Could not open current directory: $!";
   while (readdir($dh)) {
@@ -539,40 +541,41 @@ sub latexFile {
 }
 
 sub genericRunner {
-  # my ($arg,$tmpdir)=@_;
-  # my $input=$arg->{'input'};
-  # my $tmpfile=File::Spec->catfile($tmpdir,"trace");
-  # my @cmdline=@{$arg->{'cmdline'}};
-  # my $tagline=$arg->{'tagline'};
-  # my $key=&commandKey(@cmdline);
-  # &forceDependency($key,$input);
-  # my @changed=&preMortem($key);
-  # if ($#changed==-1 || ($hash->{$input} eq "0")) {
-  #   # Necessary only for debug
-  #   &xlog(3,"▲ $tagline...done\n");
-  #   &postVitam($key);
-  #   return 1;
-  # } elsif ($#changed < 5) {
-  #   &xlog(2,'Changed: ',join(' ',@changed),'');
-  # } else {
-  #   &xlog(2,'Changed: ',$#changed,' files','');
-  #   &xlog(6,'Changed: ',join(' ',@changed),'');
-  # }
-  # &xlog(1,"△ $tagline...");
-  # $a=executeCommand('',
-  #                   'strace','-f','-e','trace=access,open',
-  #                   '-o',$tmpfile,
-  #                   @cmdline
-  #                  );
-  # if ($a->[0] == 0) {
-  #   &xlog(1,"ok\n");
-  # } else {
-  #   &xlog(1,"fail\n");
-  #   die "Argh";
-  # }
-  # &postMortem($key,$tmpfile);
-  # $in->{$key}->{$input}=$hash->{$input};
-  # return 0;
+  my ($env,$arg,$tmpdir)=@_;
+  my $input=$arg->{'input'};
+  my $tmpfile=File::Spec->catfile($tmpdir,"trace");
+  my @cmdline=@{$arg->{'cmdline'}};
+  my $tagline=$arg->{'tagline'};
+  my $key=&commandKey(@cmdline);
+  &forceDependency($env,$key,$input);
+  my @changed=&preMortem($env,$key);
+  if ($#changed==-1 || ($env->{'hash'}->{$input} eq "0")) {
+    # Necessary only for debug
+    &xlog(3,"▲ $tagline...done\n");
+    &postVitam($env,$key);
+    return 1;
+  } elsif ($#changed < 5) {
+    &xlog(2,'Changed: ',join(' ',@changed),'');
+  } else {
+    &xlog(2,'Changed: ',$#changed,' files','');
+    &xlog(6,'Changed: ',join(' ',@changed),'');
+  }
+  &xlog(1,"△ $tagline...");
+  $a=executeCommand('',
+                    'strace','-f','-e','trace=access,open',
+                    '-o',$tmpfile,
+                    @cmdline
+                   );
+  if ($a->[0] == 0) {
+    &xlog(1,"ok\n");
+  } else {
+    &xlog(1,"fail\n");
+    die "Argh";
+  }
+  &postMortem($env,$key,$tmpfile);
+  # in some cases, the "inputfile" is not read
+  $env->{'in'}->{$key}->{$input}=$env->{'hash'}->{$input} if ($input =~ /^pseudo:\/\//);
+  return 0;
 }
 
 sub storeCruft {
@@ -619,9 +622,9 @@ sub storeFiles {
   foreach my $opt (@{$env->{'savedopts'}}) {
     print FILE "option;",&quote($opt),";1;\n";
   }
-  # foreach my $opt (keys %pseudofile) {
-  #   print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
-  # }
+  foreach my $opt (keys %{$env->{'pseudofile'}}) {
+    print FILE "pseudofile;",&quote($env->{'pseudofile'}->{$opt}),';',&quote($opt),";\n";
+  }
   foreach my $opt (keys %{$env->{'cruftin'}}) {
     print FILE "cruftin;",&quote($opt),";;\n";
   }
@@ -635,6 +638,7 @@ sub storeFiles {
 }
 
 sub postVitam {
+  my $_;
   my ($env,$key)=@_;
   $env->{'in'}->{$key}=clone($env->{'oldin'}->{$key});
   $env->{'out'}->{$key}=clone($env->{'oldout'}->{$key});
@@ -646,6 +650,7 @@ sub postVitam {
 }
 
 sub postMortem {
+  my $_;
   my ($env,$key,$tmpfile)=@_;
   open TRACE,"$tmpfile";
   while (<TRACE>) {
@@ -690,6 +695,7 @@ sub forceDependency {
 }
 
 sub preMortem {
+  my $_;
   my ($env,$key)=@_;
   my $oldin=$env->{'oldin'};
   my $oldout=$env->{'oldout'};
