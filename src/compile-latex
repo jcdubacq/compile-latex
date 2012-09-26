@@ -30,13 +30,10 @@ my $defaultenv={
                 'inputfiles'       =>[],
                 'jobname'          =>[],
                 'indexFile'        =>[],
-                'indexFileSuffix'  =>[],
                 'indexStyle'       =>[],
-                'indexOutputSuffix'=>[],
                 'indexOptions'     =>[],
                 'indexOutput'      =>[],
-                'bibFile'          =>[],
-                'bibFileSuffix'    =>[],
+                'bibFile'          =>{},
                };
 
 # launch
@@ -48,7 +45,7 @@ sub init {
   my $CLIenv=clone($defaultenv);
   $CLIenv->{'auto'}=1;
   $CLIenv->{'forget'}=0;
-  &parseARGV($CLIenv,@_);
+  &parseARGV(1,$CLIenv,@_);
   if ($CLIenv->{'help'}) {
     &usage($CLIenv->{'help'});
   }
@@ -57,7 +54,7 @@ sub init {
     &usage($CLIenv->{'usage'});
   }
   if ($#{$CLIenv->{'inputfiles'}} > 0) {
-    print STDERR "Multiple files specified: ".join(' ',@$CLIenv->{'inputfile'})."\n";
+    print STDERR "Multiple files specified: ".join(' ',@$CLIenv->{'inputfiles'})."\n";
     &usage($CLIenv->{'usage'});
   }
   foreach my $filename (@{$CLIenv->{inputfiles}}) {
@@ -87,7 +84,7 @@ sub initInputFile {
   }
   close FILE;
   if ($#infile != -1) {
-    &parseARGV($env,@infile);
+    &parseARGV(0,$env,@infile);
   }
   my $denv=&mergeEnvironments($env,$CLIenv);
   my $stem=basename($inputfile,'.tex');
@@ -101,9 +98,9 @@ sub initInputFile {
 }
 
 sub initStemFile {
-  my $env=clone(shift @_);
-  my $inputfile=''.shift @_;
-  my $stem=''.shift @_;
+  my $env=shift @_;
+  my $inputfile=shift @_;
+  my $stem=shift @_;
   my $hashfile="$stem.md5";
   &xlog(2,"▲ Processing $stem out of $inputfile\n");
   my $hashenv=clone($defaultenv);
@@ -117,10 +114,17 @@ sub initStemFile {
   $hashenv->{'stem'}=$stem;
   $hashenv->{'hashfile'}=$hashfile;
   $hashenv->{'input'}=$inputfile;
-  &loadFiles($hashenv,$hashfile);
-  # TODO: persistance
-  # TODO: forget
+  my $loadedopts=&loadFiles($hashenv,$hashfile);
+  &parseARGV(1,$hashenv,@$loadedopts);
+  if ($env->{'forget'} ||
+      (exists($hashenv->{'savedopts'}) &&
+       exists($env->{'savedopts'}))
+     ) {
+    &xlog(3,"Forgetting old saved options");
+    delete $hashenv->{'savedopts'};
+  }
   my $fullenv=mergeEnvironments($env,$hashenv);
+  &processBibOption($fullenv);
   &loopCommands($fullenv);
   my %list;
   if ($deps & 0x1) {
@@ -152,7 +156,9 @@ sub initStemFile {
 
 sub parseARGV {
   my @args=();
+  my $persist=shift @_;
   my $env=shift @_;
+  my @savedopts=();
   my @lonearg=();
   my @loneopts=('--help','--force','--depends','--outputs','--quiet',
                 '--index','--forget','--man','--internals','--usage',
@@ -161,7 +167,7 @@ sub parseARGV {
                );
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
-               '--input','--debug','--bibtex-file',
+               '--input','--debug','--bibtex-file','--bibtex-file-suffix',
                '--makefile','--makefile-prefix','--jobname',
               );
   my $m;
@@ -184,7 +190,6 @@ sub parseARGV {
   }
   push $env->{'inputfiles'},@lonearg;
   my $index=-1;
-  my $bib=-1;
   foreach (@args) {
     my $arg=${$_}[0];
     my $val=${$_}[1];
@@ -228,26 +233,29 @@ sub parseARGV {
     } elsif ($arg eq '--jobname') {
       push $env->{'jobname'},$val;
     } elsif ($arg eq '--bibtex') {
-      $env->{'bibFileSuffix'}->[++$bib]='.aux';
+      $env->{'bibFile'}->{'suffix://aux'}=1;
+      push @savedopts,$arg;
     } elsif ($arg eq '--bibtex-file-suffix') {
-      $env->{'bibFileSuffix'}->[++$bib]='.'.$val;
+      $env->{'bibFile'}->{'suffix://'.$val}=1;
+      push @savedopts,$arg,$val;
     } elsif ($arg eq '--bibtex-file') {
-      $env->{'bibFile'}->[++$bib]=$val;
+      $env->{'bibFile'}->{$val}=1;
+      push @savedopts,$arg,$val;
     } elsif ($arg eq '--index') {
-      $env->{'indexFileSuffix'}->[++$index]='.idx';
+      $env->{'indexFile'}->[++$index]='suffix://idx';
     } elsif ($arg eq '--index-file-suffix') {
-      $env->{'indexFileSuffix'}->[++$index]='.'.$val;
+      $env->{'indexFile'}->[++$index]='suffix://'.$val;
     } elsif ($arg eq '--index-file') {
       $env->{'indexFile'}->[++$index]=$val;
     } elsif ($arg eq '--index-output-suffix') {
       die "No index-file yet!" if ($index == -1);
-      $env->{'indexOutputSuffix'}->[$index]='.'.$val;
+      $env->{'indexOutput'}->[$index]='suffix://'.$val;
     } elsif ($arg eq '--index-output') {
       die "No index-file yet!" if ($index == -1);
       $env->{'indexOutput'}->[$index]='.'.$val;
     } elsif ($arg eq '--index-style-suffix') {
       die "No index-file yet!" if ($index == -1);
-      $env->{'indexStyleSuffix'}->[$index]='.'.$val;
+      $env->{'indexStyle'}->[$index]='suffix://'.$val;
     } elsif ($arg eq '--index-style') {
       die "No index-file yet!" if ($index == -1);
       $env->{'indexStyle'}->[$index]=$val;
@@ -256,9 +264,25 @@ sub parseARGV {
       $env->{'indexOptions'}->[$index]=[map {&unquote($_)} split(/ /,$val)];
     }
   }
+  $env->{'savedopts'}=\@savedopts if ($persist and $#savedopts>-1);
 }
 
 sub processBibOption {
+  my $env=shift @_;
+  my $stem=$env->{'stem'};
+  my $commands=[];
+  my %uniq=();
+  my $k;
+  foreach $k (keys %{$env->{'bibFile'}}) {
+    $k =~ s|^suffix://|$stem.|;
+    $uniq{$k}="1";
+  }
+  foreach $k (sort keys %uniq) {
+    print STDERR $k,"\n";
+  }
+}
+
+sub processBibOptionX {
   # my ($_,$persistance)=@_;
   # my $cmdline=['bibtex',$_];
   # my $tagline=join(' ',@$cmdline);
@@ -397,6 +421,7 @@ sub loopCommands {
 
 sub loadFiles {
   my ($env)=@_;
+  my @loadedopts;
   &xlog(3,"▲ Loading hashes\n");
   open FILE,$env->{'hashfile'} or return;
   while (<FILE>) {
@@ -407,9 +432,15 @@ sub loadFiles {
       $env->{'in'}->{$p}={} unless (exists($env->{'in'}->{$p}));
       $env->{'in'}->{$p}->{$f}=$v;
     }
+    if ($t eq 'mainkey') {
+      $env->{'mainkey'}=&unquote($p);
+    }
     if ($t eq 'out') {
       $env->{'out'}->{$p}={} unless (exists($env->{'out'}->{$p}));
       $env->{'out'}->{$p}->{$f}=$v;
+    }
+    if ($t eq 'option') {
+      push @loadedopts,&unquote($p);
     }
     if ($t eq 'pseudofile') {
       $env->{'pseudofile'}->{&unquote($v)}=&unquote($p);
@@ -428,7 +459,7 @@ sub loadFiles {
     }
   }
   close FILE;
-  return 1;
+  return \@loadedopts;
 }
 
 sub newRound {
@@ -596,9 +627,9 @@ sub storeFiles {
       print FILE "out;$prog;$v;$key\n";
     }
   }
-  # foreach my $opt (@savedopts) {
-  #   print FILE "option;",&quote($opt),";1;\n";
-  # }
+  foreach my $opt (@{$env->{'savedopts'}}) {
+    print FILE "option;",&quote($opt),";1;\n";
+  }
   # foreach my $opt (keys %pseudofile) {
   #   print FILE "pseudofile;",&quote($pseudofile{$opt}),';',&quote($opt),";\n";
   # }
@@ -874,6 +905,11 @@ sub mergeEnvironments {
   foreach (keys %$envb) {
     if (!exists $env->{$_}) {
       $env->{$_}=clone($envb->{$_});
+    } elsif ((ref $env->{$_}) eq 'HASH') {
+      die unless (ref $envb->{$_}) eq 'HASH';
+      foreach my $k (keys %{$envb->{$_}}) {
+        $env->{$_}->{$k}=$envb->{$_}->{$k};
+      }
     } elsif ((ref $env->{$_}) eq 'ARRAY') {
       die unless (ref $envb->{$_}) eq 'ARRAY';
       push $env->{$_},@{$envb->{$_}};
