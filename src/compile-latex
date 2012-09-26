@@ -111,6 +111,7 @@ sub initStemFile {
   $hashenv->{'in'}={};
   $hashenv->{'out'}={};
   $hashenv->{'hash'}={};
+  $hashenv->{'pseudofile'}={};
   $hashenv->{'stem'}=$stem;
   $hashenv->{'hashfile'}=$hashfile;
   $hashenv->{'input'}=$inputfile;
@@ -279,28 +280,16 @@ sub processBibOption {
   }
   foreach $k (sort keys %uniq) {
     print STDERR $k,"\n";
+    push $commands,{'proc' => \&pseudofileBib,
+                    'args' => {'input'=>$k,'autobib'=>2}
+                   };
+    push $commands,{'proc' => \&genericRunner,
+                    'args' => {'input'=>'pseudo://bib/'.$k,
+                               'tagline'=>$tagline,
+                               'cmdline'=>$cmdline,
+                               'autobib'=>1}
+                   };
   }
-}
-
-sub processBibOptionX {
-  # my ($_,$persistance)=@_;
-  # my $cmdline=['bibtex',$_];
-  # my $tagline=join(' ',@$cmdline);
-  # my $key=&commandKey(@$cmdline);
-  # if (!exists($includedopts{$key})) {
-  #   push @commands,{'proc' => \&pseudofileBib,
-  #                   'args' => {'input'=>$_,'autobib'=>2
-  #                             }};
-  #   push @commands,{'proc' => \&genericRunner,
-  #                   'args' => {'input'=>'pseudo://bib/'.$_,
-  #                              'tagline'=>$tagline,
-  #                              'cmdline'=>$cmdline,'autobib'=>1
-  #                             }};
-  #   if ($persistance) {
-  #     push @savedopts,'--bibtex-file',$_;
-  #   }
-  #   $includedopts{$key}=1;
-  # }
 }
 
 sub processIndexOption {
@@ -342,7 +331,7 @@ sub pseudofileBib {
   my $key="pseudofileBib ".&quote($inputfile);
   my $tagline="Extracting bibliography from $inputfile";
   &forceDependency($key,$inputfile);
-  my @changed=&preMortem($key);
+  my @changed=&preMortem($env,$key);
   if ($#changed==-1) {
     # Necessary only for debug
     &xlog(3,"▲ $tagline...done\n");
