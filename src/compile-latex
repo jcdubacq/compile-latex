@@ -419,21 +419,30 @@ sub processBibOption {
   my %uniq=();
   my $k;
   foreach $k (keys %{$env->{'bibFile'}}) {
+    my $kk=$k;
     $k =~ s|^suffix://|$stem.|;
     $uniq{$k}="1";
+    if ($kk eq $k) {
+      push $env->{'savedopts'},'--bibtex-file',$k;
+    } else {
+      $kk=~ s|^suffix://||;
+      push $env->{'savedopts'},'--bibtex-file-suffix',$kk;
+    }
   }
   foreach $k (sort keys %uniq) {
     my $cmdline=['bibtex',$k];
     my $tagline=join(' ',@$cmdline);
-    push $env->{'commands'},{'proc' => \&pseudofileBib,
-                             'args' => {'input'=>$k,'autobib'=>2}
-                            };
-    push $env->{'commands'},{'proc' => \&genericRunner,
-                             'args' => {'input'=>'pseudo://bib/'.$k,
-                                        'tagline'=>$tagline,
-                                        'cmdline'=>$cmdline,
-                                        'autobib'=>1}
-                            };
+    push $env->{'commands'},
+      {'proc' => \&pseudofileBib,
+       'args' => {'input'=>$k,'autobib'=>2}
+      };
+    push $env->{'commands'},
+      {'proc' => \&genericRunner,
+       'args' => {'input'=>'pseudo://bib/'.$k,
+                  'tagline'=>$tagline,
+                  'cmdline'=>$cmdline,
+                  'autobib'=>1}
+      };
   }
 }
 
@@ -895,7 +904,13 @@ sub usage {
   if ($option eq "usage") {
     $out =~ s/OPTIONS.*$//s;
   }
-  print $out;
+  if ($option ne "man") {
+    print $out;
+  } else {
+    open FILE,"|pager";
+    print FILE $out;
+    close FILE;
+  }
   exit;
 }
 
