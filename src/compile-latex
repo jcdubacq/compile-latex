@@ -51,8 +51,6 @@ my $gitignore=0;                # ignore outputs
 my $defaultenv={
                 'inputfiles'       =>[],
                 'jobname'          =>[],
-                'bibFile'          =>{},
-                'indexFile'        =>{},
                };
 
 # launch
@@ -92,7 +90,7 @@ sub init {
 sub initInputFile {
   my $CLIenv=shift @_;
   my $inputfile=shift @_;
-  my $env=clone($defaultenv);
+  my $INPUTenv=clone($defaultenv);
   &xlog(6,"▲ Searching $inputfile for options\n");
   open FILE,''.$inputfile;
   my @infile=();
@@ -103,20 +101,20 @@ sub initInputFile {
   }
   close FILE;
   if ($#infile != -1) {
-    &parseARGV(0,$env,@infile);
+    &parseARGV(0,$INPUTenv,@infile);
   }
   my $stem=basename($inputfile,'.tex');
-  $CLIenv->{'naturalstem'}=''.$stem;
+  $CLIenv->{'naturalstem'}=$stem;
   my $jobnames;
   if ($#{$CLIenv->{'jobname'}} > -1) {
     $jobnames=$CLIenv->{'jobname'};
-  } elsif ($#{$env->{'jobname'}} > -1) {
-    $jobnames=$env->{'jobname'};
+  } elsif ($#{$INPUTenv->{'jobname'}} > -1) {
+    $jobnames=$INPUTenv->{'jobname'};
   } else {
     $jobnames=[$stem];
   }
   foreach $stem (@$jobnames) {
-    initStemFile($CLIenv,$env,$inputfile,$stem);
+    initStemFile($CLIenv,$INPUTenv,$inputfile,$stem);
   }
 }
 
@@ -147,9 +145,11 @@ sub initStemFile {
   my $fullenv=mergeEnvironments($CLIenv,$hashenv);
   if ($CLIenv->{'load'} & 0x1) {
     $fullenv=mergeEnvironments($fullenv,$INPUTenv);
+    print Dumper($fullenv);
   }
   $fullenv->{'savedopts'}=[];
   &processBibOption($fullenv);
+  &processIndexOption($fullenv);
   &loopCommands($fullenv);
   my %list;
   if ($deps & 0x1) {
@@ -413,32 +413,38 @@ B<--nroff> Generate man page in NROFF format.
   $env->{'savedopts'}=\@savedopts if ($persist and $#savedopts>-1);
 }
 
+sub suffixFile {
+  my ($env,$k,$opt)=@_;
+  my $stem=$env->{'stem'};
+  my $kk=$k;
+  $kk=~ s|^suffix://|$stem.|;
+  if ($kk ne $k) {
+    my $kkk=$k;
+    $kkk=~ s|^suffix://||;
+    push $env->{'savedopts'},$opt.'-suffix',$kkk;
+  } else {
+    push $env->{'savedopts'},$opt.'-suffix',$k;
+  }
+  return $kk;
+}
+
 sub processBibOption {
   my $env=shift @_;
-  my $stem=$env->{'stem'};
-  my %uniq=();
   my $k;
+  my $kk;
+  my $cmdline;
+  my $tagline;
   foreach $k (keys %{$env->{'bibFile'}}) {
-    my $kk=$k;
-    $k =~ s|^suffix://|$stem.|;
-    $uniq{$k}="1";
-    if ($kk eq $k) {
-      push $env->{'savedopts'},'--bibtex-file',$k;
-    } else {
-      $kk=~ s|^suffix://||;
-      push $env->{'savedopts'},'--bibtex-file-suffix',$kk;
-    }
-  }
-  foreach $k (sort keys %uniq) {
-    my $cmdline=['bibtex',$k];
-    my $tagline=join(' ',@$cmdline);
+    $kk=&suffixFile($env,$k,'--bibtex-file');
+    $cmdline=['bibtex',$kk];
+    $tagline=join(' ',@$cmdline);
     push $env->{'commands'},
       {'proc' => \&pseudofileBib,
-       'args' => {'input'=>$k,'autobib'=>2}
+       'args' => {'input'=>$kk,'autobib'=>2}
       };
     push $env->{'commands'},
       {'proc' => \&genericRunner,
-       'args' => {'input'=>'pseudo://bib/'.$k,
+       'args' => {'input'=>'pseudo://bib/'.$kk,
                   'tagline'=>$tagline,
                   'cmdline'=>$cmdline,
                   'autobib'=>1}
@@ -447,31 +453,33 @@ sub processBibOption {
 }
 
 sub processIndexOption {
-  # my ($_,$i,$persistance)=@_;
-  # my $cmdline=['makeindex'];
-  # push $cmdline,'-o',$indexOutput[$i] if (exists($indexOutput[$i]));
-  # push $cmdline,'-s',$indexStyle[$i] if (exists($indexStyle[$i]));
-  # push $cmdline,@{$indexOptions[$i]} if (exists($indexOptions[$i]));
-  # push $cmdline,$_;
-  # my $tagline=join(' ',@$cmdline);
-  # my $key=&commandKey(@$cmdline);
-  # if (!exists($includedopts{$key})) {
-  #   push @commands,{'proc'=>\&genericRunner,
-  #                   'args'=>{'input'=>$_,
-  #                            'tagline'=>$tagline,
-  #                            'cmdline'=>$cmdline
-  #                           }
-  #                  };
-  #   if ($persistance) {
-  #     push @savedopts,'--index-file',$_;
-  #     push @savedopts,'--index-output',$indexOutput[$i] if (exists($indexOutput[$i]));
-  #     push @savedopts,'--index-style',$indexStyle[$i] if (exists($indexStyle[$i]));
-  #     if (exists($indexOptions[$i])) {
-  #       push @savedopts,'--index-options',@{$indexOptions[$i]};
-  #     }
-  #   }
-  #   $includedopts{$key}=1;
-  # }
+  my $env=shift @_;
+  my $k;
+  my $kk;
+  my $kkk;
+  my $cmdline;
+  my $tagline;
+  foreach $k (keys %{$env->{'indexFile'}}) {
+    my $e=$env->{'indexFile'}->{$k};
+    $kkk=&suffixFile($env,$k,'--index-file');
+    $cmdline=['makeindex'];
+    push $cmdline,'-o',
+      &suffixFile($env,$e->{'output'},
+                  '--index-output') if (exists($e->{'output'}));
+    push $cmdline,'-s',
+      &suffixFile($env,$e->{'style'},
+                  '--index-style') if (exists($e->{'style'}));
+    push $cmdline,@{$e->{'options'}} if (exists($e->{'options'}));
+    push $cmdline,$kkk;
+    $tagline=join(' ',@$cmdline);
+    push $env->{'commands'},
+      {'proc' => \&genericRunner,
+       'args' => {'input'=>$kkk,
+                  'tagline'=>$tagline,
+                  'cmdline'=>$cmdline
+                 }
+      };
+  }
 }
 
 sub pseudofileBib {
@@ -1062,7 +1070,7 @@ sub mergeEnvironments {
   my ($enva,$envb)=(@_);
   my $env=clone($enva);
   foreach (keys %$envb) {
-    if (!exists $env->{$_}) {
+    if (!exists($env->{$_})) {
       $env->{$_}=clone($envb->{$_});
     }
   }
