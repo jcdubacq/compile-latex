@@ -1,5 +1,27 @@
 #!/usr/bin/perl
 
+if (0) {
+
+=pod
+
+=head1 NAME
+
+compile-latex - compile TeX files as many times as needed
+
+=head1 SYNOPSIS
+
+compile-latex [I<options>] file[.tex]
+
+compile-latex B<--depends>|B<--outputs>|B<--internals> file[.tex]
+
+compile-latex [B<--makefile-prefix> I<prefix>] B<--makefile> I<makefile> file[.tex]
+
+compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
+
+=cut
+
+}
+
 use strict;
 use warnings;
 use File::Spec;
@@ -49,8 +71,9 @@ sub init {
     print STDERR "No file specified\n";
     &usage($CLIenv->{'usage'});
   }
+  # this may be deleted to support several inputfiles
   if ($#{$CLIenv->{'inputfiles'}} > 0) {
-    print STDERR "Multiple files specified: ".join(' ',@$CLIenv->{'inputfiles'})."\n";
+    print STDERR "Multiple files specified: ".join(' ',@{$CLIenv->{'inputfiles'}})."\n";
     &usage($CLIenv->{'usage'});
   }
   foreach my $filename (@{$CLIenv->{inputfiles}}) {
@@ -82,19 +105,24 @@ sub initInputFile {
   if ($#infile != -1) {
     &parseARGV(0,$env,@infile);
   }
-  my $denv=&mergeEnvironments($env,$CLIenv);
   my $stem=basename($inputfile,'.tex');
-  $denv->{'naturalstem'}=''.$stem;
-  if ($#{$denv->{'jobname'}} == -1) {
-    push $denv->{'jobname'},$stem;
+  $CLIenv->{'naturalstem'}=''.$stem;
+  my $jobnames;
+  if ($#{$CLIenv->{'jobname'}} > -1) {
+    $jobnames=$CLIenv->{'jobname'};
+  } elsif ($#{$env->{'jobname'}} > -1) {
+    $jobnames=$env->{'jobname'};
+  } else {
+    $jobnames=[$stem];
   }
-  foreach $stem (@{$denv->{'jobname'}}) {
-    initStemFile($denv,$inputfile,$stem);
+  foreach $stem (@$jobnames) {
+    initStemFile($CLIenv,$env,$inputfile,$stem);
   }
 }
 
 sub initStemFile {
-  my $env=shift @_;
+  my $CLIenv=shift @_;
+  my $INPUTenv=shift @_;
   my $inputfile=shift @_;
   my $stem=shift @_;
   my $hashfile="$stem.md5";
@@ -113,15 +141,14 @@ sub initStemFile {
   $hashenv->{'hashfile'}=$hashfile;
   $hashenv->{'input'}=$inputfile;
   my $loadedopts=&loadFiles($hashenv,$hashfile);
-  &parseARGV(1,$hashenv,@$loadedopts);
-  # if ($env->{'forget'} ||
-  #     (exists($hashenv->{'savedopts'}) &&
-  #      exists($env->{'savedopts'}))
-  #    ) {
-  #   &xlog(3,"Forgetting old saved options");
-  #   delete $hashenv->{'savedopts'};
-  # }
-  my $fullenv=mergeEnvironments($env,$hashenv);
+  if ($CLIenv->{'load'} & 0x2) {
+    &parseARGV(1,$hashenv,@$loadedopts);
+  }
+  my $fullenv=mergeEnvironments($CLIenv,$hashenv);
+  if ($CLIenv->{'load'} & 0x1) {
+    $fullenv=mergeEnvironments($fullenv,$INPUTenv);
+  }
+  $fullenv->{'savedopts'}=[];
   &processBibOption($fullenv);
   &loopCommands($fullenv);
   my %list;
@@ -150,28 +177,6 @@ sub initStemFile {
   if ($gitignore) {
     &outputGitignore($fullenv);
   }
-}
-
-if (0) {
-
-=pod
-
-=head1 NAME
-
-compile-latex - compile TeX files as many times as needed
-
-=head1 SYNOPSIS
-
-compile-latex [I<options>] file[.tex]
-
-compile-latex B<--depends>|B<--outputs>|B<--internals> file[.tex]
-
-compile-latex [B<--makefile-prefix> I<prefix>] B<--makefile> I<makefile> file[.tex]
-
-compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
-
-=cut
-
 }
 
 sub parseARGV {
@@ -523,7 +528,7 @@ sub loopCommands {
   push @commands,{'proc' => \&latexFile,'args' => {}};
   if (!exists($env->{'auto'}) || $env->{'auto'}) {
     push @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
-    push $env->{'savedopts'},'--auto';
+    push $env->{'savedopts'},'--discover';
   } else {
     push $env->{'savedopts'},'--manual';
   }
