@@ -16,23 +16,37 @@ compile-latex __\--help__|__\--man__|__\--nroff__|__\--usage__
 
 ## GENERIC OPTIONS
 
-__\--debug__ _n_ Change the verbosity level to _n_ (see ["DEBUG"](#debug)).
+__\--jobname__ Use this jobname. Can be repeated to loop through several
+jobnames. _Not persistant_.
 
-__\--forget__ Forget persistent options stored for the file (e.g. index
-options).
+__\--debug__ _n_ Change the verbosity level to _n_ (see
+["DEBUG"](#debug)). _Not persistant_.
 
-__\--manual__ Removes automatic mode. This option is persistant.
+__\--quiet__ Same as `--debug 0`.
 
-__\--auto__ (default) Reinstates automatic mode. Use it to remove
-__\--manual__ effect. Currently has the effect of __\--index__, __\--bibtex__
-if no other index option (resp. bibliography) option was selected, and
-starts the automatic discovery mode for `bibtex`.
+__\--manual__ Removes automatic mode.
+
+__\--discover__ (default) Automatic discovery mode. Currently, finds all
+bibtex-able files and add appropriate actions to deal with
+them. Also adds the idx/ind index action (only if an index is generated).
+
+__\--load-all__ Load options from command line, input file and hash file(s).
+
+__\--load-old__ Load options from command line and hash file(s).
+
+__\--load-input__ Load options from command line and input file.
+
+__\--load-none__ Load options from command line only.
 
 ## BIBTEX OPTIONS
 
 __\--bibtex-file__ _somefile_ Marks some file to be an input for
-`bibtex`. Can be given multiple times. Automatic mode will probably
-spot all bibtex-able files anyway, so mostly useful in manual mode.
+`bibtex`. Can be given multiple times. Discovery mode will probably
+spot all bibtex-able files anyway, so mostly useful in manual
+mode. Persistant.
+
+__\--bibtex-file-suffix__ _string_ Same as above, except it uses
+`jobname.string`.
 
 __\--bibtex__ Equivalent to __\--bibtex-file__ _file.aux_.
 
@@ -57,6 +71,8 @@ __\--index-options__ _string_ Corresponds to other options of makeindex,
 separated by spaces, see ["QUOTING"](#quoting).
 
 ## DEPENDENCY OPTIONS
+
+All of these options are not persistant.
 
 __\--depends__ List local files read by compilation and not overwritten
 (`.tex`, `.cls`,...)
@@ -118,19 +134,23 @@ Options may come from:
 - the command line
 - previous invocations (unless __\--forget__ is used)
 - the file itself in specially formatted comments
-- automatic mode
 
-Some options coming from the command line and previous invocations will
-be stored in the `file.md5` file and will be reused at later
-invocations. They are the index options, bibtex options and the
-__\--manual__ option (since __\--auto__ is on by default, it does not need
-to be stored).
+Most options are persistant: they will be stored in the hashfile and
+remembered on subsequent calls. However, if one category of options is
+given in two different sources, the first one takes precedence. For
+example, if the command line indicates `--index-file-suffix adx` and
+the last invocation was `--index-file-suffix idx`, only one index
+ending in `.adx` will be processed (options are not _merged_).
 
-Comment lines in the file formatted as follows: one or more percent
-char, zero or more spaces, the string `compile-latex`, one or more
-spaces, the string `"option"`, zero or more spaces, the string `":"`
-and one option (without any excess spaces), will be considered as an
-option. These options will not be stored for later invocations, since
+The __\--load-\*__ options can be used to select which sources are
+considered. Of course, jobnames cannot be read from the hashfile (they
+have to be already known at this point).
+
+Comment lines in the input file formatted as follows: one or more
+percent char, zero or more spaces, the string `compile-latex`, one or
+more spaces, the string `"option"`, zero or more spaces, the string
+`":"` and one option (without any excess spaces), will be considered as
+an option. These options will not be stored for later invocations, since
 they are in the file anyway.
 
 # QUOTING
