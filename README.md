@@ -165,14 +165,20 @@ should almost never be necessary.
 
 It is difficult to build generic Makefile snippets that satisfy
 everyone. The current choice is to build some phony targets: _all_,
-_do_, _clean_, _distclean_ and _depends_. _all_, _do_ and
-_depends_ will rebuild the targets with the same options that were used
-when building the makefile (using __\--load-none__). _do_ is phony and
-will always rebuild all files. _all_ will rebuild all files that are
-not up-to-date (it means older than their dependencies, or not
-existent). _depends_ will do the same as _do_, and rebuild the
-Makefile (and possibly ignore files). _clean_ and _distclean_ remove
-the files (except for the main output with _clean_).
+_do_, _clean_, _distclean_, _depends_ and _depends-as-is_. _all_,
+_do_ and _depends_ will rebuild the targets with the same options that
+were used when building the makefile (using __\--load-none__);
+_depends-as-is_ will not use __\--load-none__, thus using the currently
+selected options. _do_ is phony and will always rebuild all
+files. _all_ will rebuild all files that are not up-to-date (it means
+older than their dependencies, or not existent). _depends_ will do the
+same as _do_, and rebuild the Makefile (and possibly ignore
+files). _clean_ and _distclean_ remove the files (except for the main
+output with _clean_).
+
+To avoid interacting with other targets in the Makefile, all these
+targets can be prefixed by some chosen prefix using
+__\--makefile-prefix__.
 
 # DEBUG
 
