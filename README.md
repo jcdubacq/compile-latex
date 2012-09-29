@@ -17,18 +17,18 @@ compile-latex __\--help__|__\--man__|__\--nroff__|__\--usage__
 ## GENERIC OPTIONS
 
 __\--jobname__ Use this jobname. Can be repeated to loop through several
-jobnames. _Not persistant_.
+jobnames. _Not persistent_.
 
 __\--debug__ _n_ Change the verbosity level to _n_ (see
-["DEBUG"](#debug)). _Not persistant_.
+["DEBUG"](#debug)). _Not persistent_.
 
 __\--quiet__ Same as `--debug 0`.
 
 __\--manual__ Removes automatic mode.
 
 __\--discover__ (default) Automatic discovery mode. Currently, finds all
-bibtex-able files and add appropriate actions to deal with
-them. Also adds the idx/ind index action (only if an index is generated).
+bibtex-able files and add appropriate actions to deal with them. Also
+adds the idx/ind index action (only if no other index option is given).
 
 __\--load-all__ Load options from command line, input file and hash file(s).
 
@@ -43,7 +43,7 @@ __\--load-none__ Load options from command line only.
 __\--bibtex-file__ _somefile_ Marks some file to be an input for
 `bibtex`. Can be given multiple times. Discovery mode will probably
 spot all bibtex-able files anyway, so mostly useful in manual
-mode. Persistant.
+mode. Persistent.
 
 __\--bibtex-file-suffix__ _string_ Same as above, except it uses
 `jobname.string`.
@@ -72,7 +72,7 @@ separated by spaces, see ["QUOTING"](#quoting).
 
 ## DEPENDENCY OPTIONS
 
-All of these options are not persistant.
+All of these options are not persistent.
 
 __\--depends__ List local files read by compilation and not overwritten
 (`.tex`, `.cls`,...)
@@ -85,7 +85,7 @@ __\--outputs__ List local files output by compilation, but not read
 
 __\--makefile__ _file.mk_ Outputs a makefile snippet included in
 _file.mk_. The sections are self-delimited and replaced if already
-present.
+present (see  ["MAKEFILE"](#makefile)).
 
 __\--make__ Same as `--makefile Makefile`.
 
@@ -114,16 +114,15 @@ fixed point. The program assumes that if all the inputs of a program are
 the same, then not repeating this program is acceptable; and if any
 input of a program changes, then the program is rerun.
 
-compile-latex also manages makeindex. It supports the use of
-the `multind` and `index` packages for multiple indexes; however, the
-automatic mode only uses the `.idx` -> `.ind` standard index.
+compile-latex also manages makeindex. It supports the use of the
+`multind` and `index` packages for multiple indexes; however, the
+automatic mode only uses the `.idx` to `.ind` standard index.
 
-compile-latex also manages bibtex. It currently supports only simple
-bibliography or multibib package (with hints); bibtopic, biblatex are
-not supported).
+compile-latex also manages bibtex.
 
-compile-latex remembers from one compilation to another the index options
-it was given. It is not necessary to repeat them (not harmful either).
+compile-latex remembers from one compilation to another the index
+options it was given. It is not necessary to repeat them (not harmful
+either).
 
 compile-latex uses strace to determine the files accessed by a program.
 
@@ -132,10 +131,11 @@ compile-latex uses strace to determine the files accessed by a program.
 Options may come from:
 
 - the command line
-- previous invocations (unless __\--forget__ is used)
-- the file itself in specially formatted comments
+- previous invocations (if __\--load-all__ or __\--load-old__ is used)
+- the file itself in specially formatted comments (if
+__\--load-all__ or __\--load-input__ is used)
 
-Most options are persistant: they will be stored in the hashfile and
+Most options are persistent: they will be stored in the hashfile and
 remembered on subsequent calls. However, if one category of options is
 given in two different sources, the first one takes precedence. For
 example, if the command line indicates `--index-file-suffix adx` and
@@ -160,6 +160,19 @@ separate various parts (e.g. __\--index-options__). If one part needs
 spaces (a filename, for example), use `%20` for the space inside the
 part. Use `%25` for a litteral `%` and `%3B` for a `;`. Quoting
 should almost never be necessary.
+
+# MAKEFILE
+
+It is difficult to build generic Makefile snippets that satisfy
+everyone. The current choice is to build some phony targets: _all_,
+_do_, _clean_, _distclean_ and _depends_. _all_, _do_ and
+_depends_ will rebuild the targets with the same options that were used
+when building the makefile (using __\--load-none__). _do_ is phony and
+will always rebuild all files. _all_ will rebuild all files that are
+not up-to-date (it means older than their dependencies, or not
+existent). _depends_ will do the same as _do_, and rebuild the
+Makefile (and possibly ignore files). _clean_ and _distclean_ remove
+the files (except for the main output with _clean_).
 
 # DEBUG
 
@@ -189,12 +202,11 @@ have to be processed several times because of cross-references).
 
 will compile `file.tex` and do some special treatment for auxiliary
 programs. First, normal index `file.idx` will not be processed, as well
-as support for multibib (only a normal `bibtex file` will be
-issued). However, two index files ending in `.adx` and `.odx` (coming
-from the `multind` package for example) will be processed to
-`file.and` and the second one to `file.ond`, the first being indexed
-with the `makeindex` options `-g` and `-t /tmp/log indexation`
-(remark the space in the filename).
+as support for `bibtex` is removed. However, two index files ending in
+`.adx` and `.odx` (coming from the `multind` package for example)
+will be processed to `file.and` and the second one to `file.ond`, the
+first being indexed with the `makeindex` options `-g` and
+`-t /tmp/log indexation` (remark the space in the filename).
 
 # BUGS
 
@@ -203,7 +215,8 @@ Generation of pictures by other programs is not supposed to be done by
 images (in which case, compile-latex will happily rerun the generation).
 
 Makefile and gitignore options create files not safe to be invoked
-outside their own directory. Files with weird names may cause problems.
+outside their own directory. Files with weird names may cause problems
+(especially since GNUmake does not support filenames with spaces).
 
 # AUTHOR
 

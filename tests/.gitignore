@@ -1,3 +1,67 @@
+# start automatic section for 00
+/00.aux
+/00.log
+/00.md5
+/00.pdf
+# stop automatic section for 00
+# start automatic section for 01
+/01.aux
+/01.idx
+/01.ilg
+/01.ind
+/01.log
+/01.md5
+/01.pdf
+# stop automatic section for 01
+# start automatic section for 02
+/02.adx
+/02.and
+/02.aux
+/02.idx
+/02.ilg
+/02.ind
+/02.log
+/02.md5
+/02.pdf
+# stop automatic section for 02
+# start automatic section for 03
+/03.aux
+/03.bbl
+/03.blg
+/03.log
+/03.md5
+/03.pdf
+# stop automatic section for 03
+# start automatic section for 04
+/04.aux
+/04.bbl
+/04.blg
+/04.log
+/04.md5
+/04.pdf
+/xampl.aux
+/xampl.bbl
+/xampl.blg
+# stop automatic section for 04
+# start automatic section for 05
+/05-annex.tex
+/05.aux
+/05.log
+/05.md5
+/05.pdf
+# stop automatic section for 05
+# start automatic section for 06a
+/06a.aux
+/06a.log
+/06a.md5
+/06a.pdf
+# stop automatic section for 06a
+# start automatic section for 06b
+/06b.aux
+/06b.log
+/06b.md5
+/06b.pdf
+# stop automatic section for 06b
 # start automatic section for 00.tex
 /00.aux
 /00.log
