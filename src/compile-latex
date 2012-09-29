@@ -47,6 +47,7 @@ my $debug=1;                    # Verbosity
 my $makefilemode='';            # Makefile name
 my $makefileprefix='';          # in-Makefile common prefix
 my $gitignore=0;                # ignore outputs
+my %deplist=();
 
 my $defaultenv={
                 'inputfiles'       =>[],
@@ -84,6 +85,9 @@ sub init {
     } else {
       die "Neither $filename.tex nor $filename are readable!";
     }
+  }
+  if ($deps) {
+    print join($inBetween,sort keys %deplist),"\n";
   }
 }
 
@@ -152,25 +156,20 @@ sub initStemFile {
   &processBibOption($fullenv,1);
   &processIndexOption($fullenv);
   &loopCommands($fullenv);
-  my %list;
   if ($deps & 0x1) {
     foreach (&outputDepends($fullenv)) {
-      $list{$_}=1;
+      $deplist{$_}=1;
     }
   }
   if ($deps & 0x2) {
     foreach (&outputOutputs($fullenv)) {
-      $list{$_}=1;
+      $deplist{$_}=1;
     }
   }
   if ($deps & 0x4) {
     foreach (&outputInternals($fullenv)) {
-      $list{$_}=1;
+      $deplist{$_}=1;
     }
-  }
-  if ($deps) {
-    print join($inBetween,sort keys %list),"\n";
-    exit;
   }
   if ($makefilemode) {
     &outputMakefile($fullenv,$makefilemode,$makefileprefix);
@@ -666,14 +665,14 @@ sub autoDiscovery {
     close FILE;
   REGISTER:
     if ($bib) {
-         &xlog(2,"Spotted...$file",'');
-         # KLUDGE TODO: check attributes instead of "always two"
-         my $a=pop $env->{'commands'};
-         my $b=pop $env->{'commands'};
-         $env->{'bibFile'}->{$file}=1;
-         processBibOption($env,0);
-         push $env->{'commands'},$b,$a;
-       }
+      &xlog(2,"Spotted...$file",'');
+      # KLUDGE TODO: check attributes instead of "always two"
+      my $a=pop $env->{'commands'};
+      my $b=pop $env->{'commands'};
+      $env->{'bibFile'}->{$file}=1;
+      processBibOption($env,0);
+      push $env->{'commands'},$b,$a;
+    }
   }
   return 1;
 }
