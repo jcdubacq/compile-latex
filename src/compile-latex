@@ -1036,7 +1036,7 @@ sub outputMakefile {
   my $stem=$env->{'stem'};
   &outputSection($file,'//common',"COMPILELATEX ?= compile-latex\n".
                  "${pref}all::\n".
-                 ".PHONY: ${pref}do ${pref}depends ${pref}distclean ${pref}clean ${pref}all\n"
+                 ".PHONY: ${pref}do ${pref}depends-as-is ${pref}depends ${pref}distclean ${pref}clean ${pref}all\n"
                 );
 
   my $snip='';
@@ -1057,6 +1057,13 @@ sub outputMakefile {
   $snip.="\trm -f ".&makefileshellquote(' ',sort keys %list)."\n"; 
   $snip.="${pref}depends::\n";
   $snip.="\t\$(COMPILELATEX) --load-none ";
+  $snip.='--gitignore ' if ($gitignore);
+  $snip.='--makefile-prefix '.&makefileshellquote(' ',$pref).' ' if ($pref);
+  $snip.='--makefile '.&makefileshellquote(' ',$file,'--jobname',
+                                           $env->{'stem'},
+                                           $env->{'input'})."\n";
+  $snip.="${pref}depends-as-is::\n";
+  $snip.="\t\$(COMPILELATEX) ";
   $snip.='--gitignore ' if ($gitignore);
   $snip.='--makefile-prefix '.&makefileshellquote(' ',$pref).' ' if ($pref);
   $snip.='--makefile '.&makefileshellquote(' ',$file,'--jobname',
@@ -1258,14 +1265,20 @@ should almost never be necessary.
 
 It is difficult to build generic Makefile snippets that satisfy
 everyone. The current choice is to build some phony targets: I<all>,
-I<do>, I<clean>, I<distclean> and I<depends>. I<all>, I<do> and
-I<depends> will rebuild the targets with the same options that were used
-when building the makefile (using B<--load-none>). I<do> is phony and
-will always rebuild all files. I<all> will rebuild all files that are
-not up-to-date (it means older than their dependencies, or not
-existent). I<depends> will do the same as I<do>, and rebuild the
-Makefile (and possibly ignore files). I<clean> and I<distclean> remove
-the files (except for the main output with I<clean>).
+I<do>, I<clean>, I<distclean>, I<depends> and I<depends-as-is>. I<all>,
+I<do> and I<depends> will rebuild the targets with the same options that
+were used when building the makefile (using B<--load-none>);
+I<depends-as-is> will not use B<--load-none>, thus using the currently
+selected options. I<do> is phony and will always rebuild all
+files. I<all> will rebuild all files that are not up-to-date (it means
+older than their dependencies, or not existent). I<depends> will do the
+same as I<do>, and rebuild the Makefile (and possibly ignore
+files). I<clean> and I<distclean> remove the files (except for the main
+output with I<clean>).
+
+To avoid interacting with other targets in the Makefile, all these
+targets can be prefixed by some chosen prefix using
+B<--makefile-prefix>.
 
 =head1 DEBUG
 
