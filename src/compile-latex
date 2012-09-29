@@ -228,18 +228,18 @@ sub parseARGV {
 =head2 GENERIC OPTIONS
 
 B<--jobname> Use this jobname. Can be repeated to loop through several
-jobnames. I<Not persistant>.
+jobnames. I<Not persistent>.
 
 B<--debug> I<n> Change the verbosity level to I<n> (see
-L</"DEBUG">). I<Not persistant>.
+L</"DEBUG">). I<Not persistent>.
 
 B<--quiet> Same as C<--debug 0>.
 
 B<--manual> Removes automatic mode.
 
 B<--discover> (default) Automatic discovery mode. Currently, finds all
-bibtex-able files and add appropriate actions to deal with
-them. Also adds the idx/ind index action (only if an index is generated).
+bibtex-able files and add appropriate actions to deal with them. Also
+adds the idx/ind index action (only if no other index option is given).
 
 B<--load-all> Load options from command line, input file and hash file(s).
 
@@ -277,7 +277,7 @@ B<--load-none> Load options from command line only.
 B<--bibtex-file> I<somefile> Marks some file to be an input for
 C<bibtex>. Can be given multiple times. Discovery mode will probably
 spot all bibtex-able files anyway, so mostly useful in manual
-mode. Persistant.
+mode. Persistent.
 
 B<--bibtex-file-suffix> I<string> Same as above, except it uses
 C<jobname.string>.
@@ -342,7 +342,7 @@ separated by spaces, see L</"QUOTING">.
 
 =head2 DEPENDENCY OPTIONS
 
-All of these options are not persistant.
+All of these options are not persistent.
 
 B<--depends> List local files read by compilation and not overwritten
 (C<.tex>, C<.cls>,...)
@@ -355,7 +355,7 @@ B<--outputs> List local files output by compilation, but not read
 
 B<--makefile> I<file.mk> Outputs a makefile snippet included in
 I<file.mk>. The sections are self-delimited and replaced if already
-present.
+present (see  L</"MAKEFILE">).
 
 B<--make> Same as C<--makefile Makefile>.
 
@@ -465,6 +465,7 @@ sub processIndexOption {
   my $tagline;
   my @set=(keys %{$env->{'indexFile'}});
   if ($#set<0 and $env->{'auto'}) {
+    $persist=0;
     $env->{'indexFile'}->{'suffix://idx'}->{'do'}=1;
     @set=(keys %{$env->{'indexFile'}});
   }
@@ -479,7 +480,7 @@ sub processIndexOption {
       &suffixFile($env,$e->{'style'},
                   '--index-style',$persist) if (exists($e->{'style'}));
     push $cmdline,@{$e->{'options'}} if (exists($e->{'options'}));
-    if ($persist) {
+    if ($persist && $#{$e->{'options'}}>-1) {
       push $env->{'savedopts'},'--index-options',join(' ',map {&quote($_)} @{$e->{'options'}});
     }
     push $cmdline,$kkk;
@@ -1030,8 +1031,8 @@ sub outputSection {
 }
 
 sub outputMakefile {
-  my @savedopts=();             # TODO
   my ($env,$file,$pref)=@_;
+  my @savedopts=@{$env->{'savedopts'}};
   my $stem=$env->{'stem'};
   &outputSection($file,'//common',"COMPILELATEX ?= compile-latex\n".
                  "${pref}all::\n".
@@ -1041,29 +1042,32 @@ sub outputMakefile {
   my $snip='';
   $snip.="${pref}all:: ".$env->{'outputFile'}."\n";
   $snip.="${pref}do::\n";
-  $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
-  $snip.=join(' ',&outputOutputs($env)).
-    ":\\\n".join("\\\n",&outputDepends($env))."\n";
-  $snip.="\t".join(' ',"\$(COMPILELATEX)",@savedopts,$stem)."\n";
+  $snip.="\t\$(COMPILELATEX) --load-none ".&makefileshellquote(' ','--jobname',$env->{'stem'},@savedopts,$env->{'input'})."\n";
+  $snip.=&makefilequote(' ',&outputOutputs($env)).
+    ":\\\n".&makefilequote("\\\n",&outputDepends($env))."\n";
+  $snip.="\t\$(COMPILELATEX) --load-none ".&makefileshellquote(' ','--jobname',$env->{'stem'},@savedopts,$env->{'input'})."\n";
   $snip.="${pref}distclean::\n";
   my %list=();
   foreach (&outputInternals($env),&outputOutputs($env)) {
     $list{$_}++;
   }
-  $snip.="\trm -f ".join(' ',sort keys %list)."\n";
+  $snip.="\trm -f ".&makefileshellquote(' ',sort keys %list)."\n";
   $snip.="${pref}clean::\n";
   delete ($list{$env->{'outputFile'}});
-  $snip.="\trm -f ".join(' ',sort keys %list)."\n"; 
+  $snip.="\trm -f ".&makefileshellquote(' ',sort keys %list)."\n"; 
   $snip.="${pref}depends::\n";
-  $snip.="\t\$(COMPILELATEX)";
-  $snip.=' --gitignore' if ($gitignore);
-  $snip.=" --makefile-prefix $pref" if ($pref);
-  $snip.=" --makefile '$file' ".$env->{'input'}."\n";
+  $snip.="\t\$(COMPILELATEX) --load-none ";
+  $snip.='--gitignore ' if ($gitignore);
+  $snip.='--makefile-prefix '.&makefileshellquote(' ',$pref).' ' if ($pref);
+  $snip.='--makefile '.&makefileshellquote(' ',$file,'--jobname',
+                                           $env->{'stem'},
+                                           $env->{'input'})."\n";
   &outputSection($file,$env->{'stem'},$snip);
 }
 
 sub outputGitignore {
-  my ($env,$file,$snip)=('.gitignore','');
+  my ($env)=@_;
+  my ($file,$snip)=('.gitignore','');
   my %list=();
   foreach (&outputInternals($env),&outputOutputs($env)) {
     $list{$_}++;
@@ -1071,7 +1075,7 @@ sub outputGitignore {
   foreach (sort keys %list) {
     $snip.="/$_\n";
   }
-  &outputSection($file,$env->{'input'},$snip);
+  &outputSection($file,$env->{'stem'},$snip);
 }
 
 sub unquote {
@@ -1089,6 +1093,26 @@ sub quote {
   $d=~s/;/%3B/g;
   $d=~s/\n/%0A/g;
   return $d;
+}
+sub makefileshellquote {
+  my ($a,@x)=@_;
+  foreach my $d (@x) {
+    if ($d eq '') {
+      $d="''";
+    } elsif ($d =~ /[^-._a-zA-Z0-9]/) {
+      $d=~s/'/'\\''/g;
+      $d=~ s/\$/\$\$/g;
+      $d="'".$d."'";
+    }
+  }
+  return join($a,@x);
+}
+sub makefilequote {
+  my ($a,@x)=@_;
+  foreach my $d (@x) {
+    $d =~ s/ /\\\\/g;
+  }
+  return join($a,@x);
 }
 
 sub mergeEnvironments {
@@ -1177,16 +1201,15 @@ fixed point. The program assumes that if all the inputs of a program are
 the same, then not repeating this program is acceptable; and if any
 input of a program changes, then the program is rerun.
 
-compile-latex also manages makeindex. It supports the use of
-the C<multind> and C<index> packages for multiple indexes; however, the
-automatic mode only uses the C<.idx> -> C<.ind> standard index.
+compile-latex also manages makeindex. It supports the use of the
+C<multind> and C<index> packages for multiple indexes; however, the
+automatic mode only uses the C<.idx> to C<.ind> standard index.
 
-compile-latex also manages bibtex. It currently supports only simple
-bibliography or multibib package (with hints); bibtopic, biblatex are
-not supported).
+compile-latex also manages bibtex.
 
-compile-latex remembers from one compilation to another the index options
-it was given. It is not necessary to repeat them (not harmful either).
+compile-latex remembers from one compilation to another the index
+options it was given. It is not necessary to repeat them (not harmful
+either).
 
 compile-latex uses strace to determine the files accessed by a program.
 
@@ -1198,13 +1221,14 @@ Options may come from:
 
 =item * the command line
 
-=item * previous invocations (unless B<--forget> is used)
+=item * previous invocations (if B<--load-all> or B<--load-old> is used)
 
-=item * the file itself in specially formatted comments
+=item * the file itself in specially formatted comments (if
+B<--load-all> or B<--load-input> is used)
 
 =back
 
-Most options are persistant: they will be stored in the hashfile and
+Most options are persistent: they will be stored in the hashfile and
 remembered on subsequent calls. However, if one category of options is
 given in two different sources, the first one takes precedence. For
 example, if the command line indicates C<--index-file-suffix adx> and
@@ -1229,6 +1253,19 @@ separate various parts (e.g. B<--index-options>). If one part needs
 spaces (a filename, for example), use C<%20> for the space inside the
 part. Use C<%25> for a litteral C<%> and C<%3B> for a C<;>. Quoting
 should almost never be necessary.
+
+=head1 MAKEFILE
+
+It is difficult to build generic Makefile snippets that satisfy
+everyone. The current choice is to build some phony targets: I<all>,
+I<do>, I<clean>, I<distclean> and I<depends>. I<all>, I<do> and
+I<depends> will rebuild the targets with the same options that were used
+when building the makefile (using B<--load-none>). I<do> is phony and
+will always rebuild all files. I<all> will rebuild all files that are
+not up-to-date (it means older than their dependencies, or not
+existent). I<depends> will do the same as I<do>, and rebuild the
+Makefile (and possibly ignore files). I<clean> and I<distclean> remove
+the files (except for the main output with I<clean>).
 
 =head1 DEBUG
 
@@ -1258,12 +1295,11 @@ have to be processed several times because of cross-references).
 
 will compile C<file.tex> and do some special treatment for auxiliary
 programs. First, normal index C<file.idx> will not be processed, as well
-as support for multibib (only a normal C<bibtex file> will be
-issued). However, two index files ending in C<.adx> and C<.odx> (coming
-from the C<multind> package for example) will be processed to
-C<file.and> and the second one to C<file.ond>, the first being indexed
-with the C<makeindex> options C<-g> and C<-t /tmp/log indexation>
-(remark the space in the filename).
+as support for C<bibtex> is removed. However, two index files ending in
+C<.adx> and C<.odx> (coming from the C<multind> package for example)
+will be processed to C<file.and> and the second one to C<file.ond>, the
+first being indexed with the C<makeindex> options C<-g> and
+C<-t /tmp/log indexation> (remark the space in the filename).
 
 =head1 BUGS
 
@@ -1272,7 +1308,8 @@ C<compile-latex>, unless the document uses C<write18> to generate the
 images (in which case, compile-latex will happily rerun the generation).
 
 Makefile and gitignore options create files not safe to be invoked
-outside their own directory. Files with weird names may cause problems.
+outside their own directory. Files with weird names may cause problems
+(especially since GNUmake does not support filenames with spaces).
 
 =head1 AUTHOR
 
@@ -1286,11 +1323,3 @@ here that the license does not extend to the data managed by the
 
 =cut
 
-# options:
-# Three sets of options: CLI, INPUT, HASH
-# CLI precedes HASH precedes INPUT
-# 
-# --discover / --manual : autoDiscovery function
-# --jobname : smashing previous
-# --index* --bibtex*
-# --ignore-input / --ignore-old / --auto-load / --ignore : smashes previous
