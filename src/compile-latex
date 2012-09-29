@@ -145,10 +145,11 @@ sub initStemFile {
   my $fullenv=mergeEnvironments($CLIenv,$hashenv);
   if ($CLIenv->{'load'} & 0x1) {
     $fullenv=mergeEnvironments($fullenv,$INPUTenv);
-    print Dumper($fullenv);
   }
+  # include some default values
+  $fullenv=mergeEnvironments($fullenv,{'auto'=>1});
   $fullenv->{'savedopts'}=[];
-  &processBibOption($fullenv);
+  &processBibOption($fullenv,1);
   &processIndexOption($fullenv);
   &loopCommands($fullenv);
   my %list;
@@ -414,28 +415,29 @@ B<--nroff> Generate man page in NROFF format.
 }
 
 sub suffixFile {
-  my ($env,$k,$opt)=@_;
+  my ($env,$k,$opt,$persist)=@_;
   my $stem=$env->{'stem'};
   my $kk=$k;
   $kk=~ s|^suffix://|$stem.|;
   if ($kk ne $k) {
     my $kkk=$k;
     $kkk=~ s|^suffix://||;
-    push $env->{'savedopts'},$opt.'-suffix',$kkk;
+    push $env->{'savedopts'},$opt.'-suffix',$kkk if $persist;
   } else {
-    push $env->{'savedopts'},$opt.'-suffix',$k;
+    push $env->{'savedopts'},$opt,$k if $persist;
   }
   return $kk;
 }
 
 sub processBibOption {
   my $env=shift @_;
+  my $persist=shift @_;
   my $k;
   my $kk;
   my $cmdline;
   my $tagline;
   foreach $k (keys %{$env->{'bibFile'}}) {
-    $kk=&suffixFile($env,$k,'--bibtex-file');
+    $kk=&suffixFile($env,$k,'--bibtex-file',$persist);
     $cmdline=['bibtex',$kk];
     $tagline=join(' ',@$cmdline);
     push $env->{'commands'},
@@ -454,22 +456,31 @@ sub processBibOption {
 
 sub processIndexOption {
   my $env=shift @_;
+  my $persist=1;
   my $k;
   my $kk;
   my $kkk;
   my $cmdline;
   my $tagline;
-  foreach $k (keys %{$env->{'indexFile'}}) {
+  my @set=(keys %{$env->{'indexFile'}});
+  if ($#set<0 and $env->{'auto'}) {
+    $env->{'indexFile'}->{'suffix://idx'}->{'do'}=1;
+    @set=(keys %{$env->{'indexFile'}});
+  }
+  foreach $k (@set) {
     my $e=$env->{'indexFile'}->{$k};
-    $kkk=&suffixFile($env,$k,'--index-file');
+    $kkk=&suffixFile($env,$k,'--index-file',$persist);
     $cmdline=['makeindex'];
     push $cmdline,'-o',
       &suffixFile($env,$e->{'output'},
-                  '--index-output') if (exists($e->{'output'}));
+                  '--index-output',$persist) if (exists($e->{'output'}));
     push $cmdline,'-s',
       &suffixFile($env,$e->{'style'},
-                  '--index-style') if (exists($e->{'style'}));
+                  '--index-style',$persist) if (exists($e->{'style'}));
     push $cmdline,@{$e->{'options'}} if (exists($e->{'options'}));
+    if ($persist) {
+      push $env->{'savedopts'},'--index-options',join(' ',map {&quote($_)} @{$e->{'options'}});
+    }
     push $cmdline,$kkk;
     $tagline=join(' ',@$cmdline);
     push $env->{'commands'},
@@ -539,20 +550,21 @@ sub pseudofileBib {
 
 sub loopCommands {
   my $env=shift @_;
-  my @commands=();
   my $stem=$env->{'stem'};
-  push @commands,{'proc' => \&newRound,'args' => {}};
-  push @commands,{'proc' => \&latexFile,'args' => {}};
   if (!exists($env->{'auto'}) || $env->{'auto'}) {
-    push @commands,{'proc' => \&autoDiscovery,'args' => {'autodiscovery'=>1}};
+    unshift $env->{'commands'},
+      {
+       'proc' => \&autoDiscovery,
+       'args' => {'autodiscovery'=>1}
+      };
     push $env->{'savedopts'},'--discover';
   } else {
     push $env->{'savedopts'},'--manual';
   }
-  push @commands,@{$env->{'commands'}};
-  # TODO here, insert bibtex and makeindex
-  push @commands,{'proc' => \&storeCruft,'args' => {},'keepatend'=>1};
-  push @commands,{'proc' => \&storeFiles,'args' => {},'keepatend'=>1};
+  unshift $env->{'commands'},{'proc' => \&latexFile,'args' => {}};
+  unshift $env->{'commands'},{'proc' => \&newRound,'args' => {}};
+  push $env->{'commands'},{'proc' => \&storeCruft,'args' => {},'keepatend'=>1};
+  push $env->{'commands'},{'proc' => \&storeFiles,'args' => {},'keepatend'=>1};
   # Heuristic: anticipating the input files
   opendir (my $dh,'.') || die "Could not open current directory: $!";
   while (readdir($dh)) {
@@ -566,9 +578,9 @@ sub loopCommands {
   while ($commandredo) {
     my $i=-1;
     $commandredo=0;
-    while ($i < $#commands) { # not a foreach, because the list can change
+    while ($i < $#{$env->{'commands'}}) { # not a foreach, because the list can change
       $i++;
-      my $comm=$commands[$i];
+      my $comm=$env->{'commands'}[$i];
       my $func=$comm->{'proc'};
       my $ret=&$func($env,$comm->{'args'},$tmpdir);
       $commandredo=1 unless ($ret);
@@ -636,28 +648,28 @@ sub autoDiscovery {
   my $tagline=("Auto-discovery");
   &xlog(2,"▲ $tagline...");
   &xlog(2,"ok\n");
-  return 1;              #TODO
-  # foreach my $file (keys %{$out->{$mainkey}}) {
-  #   next unless existFile($file);
-  #   open FILE,$file;
-  #   my $bib=0;
-  #   while (<FILE>) {
-  #     if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
-  #       $bib=1;next;
-  #     } else {
-  #       $bib=0;last;
-  #     }
-  #   }
-  #   close FILE;
-  #   if ($bib) {
-  #     &xlog(5,"Spotted...$file",'');
-  #     my $a=pop @commands;
-  #     my $b=pop @commands;
-  #     processBibOption($file,0);
-  #     push @commands,$b,$a;
-  #   }
-  # }
-  # return 1;
+  foreach my $file (keys %{$env->{'out'}->{$env->{'mainkey'}}}) {
+    next unless existFile($file);
+    open FILE,$file;
+    my $bib=0;
+    while (<FILE>) {
+      if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
+        $bib=1;next;
+      } else {
+        $bib=0;last;
+      }
+    }
+    close FILE;
+    if ($bib) {
+         &xlog(5,"Spotted...$file",'');
+         # KLUDGE TODO: check attributes instead of "always two"
+         my $a=pop $env->{'commands'};
+         my $b=pop $env->{'commands'};
+         processBibOption($env,0);
+         push $env->{'commands'},$b,$a;
+       }
+  }
+  return 1;
 }
 
 sub latexFile {
@@ -772,6 +784,7 @@ sub storeFiles {
   my $out=$env->{'out'};
   my $in=$env->{'in'};
   my $v;
+  my $spec=0;
   open FILE,'>'.$env->{'hashfile'};
   foreach my $prog (sort keys %$in) {
     foreach my $key (sort keys %{$in->{$prog}}) {
@@ -786,7 +799,15 @@ sub storeFiles {
     }
   }
   foreach my $opt (@{$env->{'savedopts'}}) {
-    print FILE "option;",&quote($opt),";1;\n";
+    if ($opt eq "--index-options") {
+      $spec=1;
+      print FILE "option;",&quote($opt),";1;\n";
+    } elsif ($spec == 1) {
+      $spec=0;
+      print FILE "option;",$opt,";1;\n";
+    } else {
+      print FILE "option;",&quote($opt),";1;\n";
+    }
   }
   foreach my $opt (keys %{$env->{'pseudofile'}}) {
     print FILE "pseudofile;",&quote($env->{'pseudofile'}->{$opt}),';',&quote($opt),";\n";
