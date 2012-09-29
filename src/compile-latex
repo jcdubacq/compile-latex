@@ -438,6 +438,8 @@ sub processBibOption {
   my $tagline;
   foreach $k (keys %{$env->{'bibFile'}}) {
     $kk=&suffixFile($env,$k,'--bibtex-file',$persist);
+    next if ($env->{'bibFileUniq'}->{$kk});
+    $env->{'bibFileUniq'}->{$kk}=1;
     $cmdline=['bibtex',$kk];
     $tagline=join(' ',@$cmdline);
     push $env->{'commands'},
@@ -650,21 +652,25 @@ sub autoDiscovery {
   &xlog(2,"ok\n");
   foreach my $file (keys %{$env->{'out'}->{$env->{'mainkey'}}}) {
     next unless existFile($file);
+    my $bib=1;
+    goto REGISTER if ($file eq $env->{'stem'}.'.aux');
+    $bib=0;
     open FILE,$file;
-    my $bib=0;
     while (<FILE>) {
       if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
-        $bib=1;next;
+        $bib=1;last;
       } else {
         $bib=0;last;
       }
     }
     close FILE;
+  REGISTER:
     if ($bib) {
-         &xlog(5,"Spotted...$file",'');
+         &xlog(2,"Spotted...$file",'');
          # KLUDGE TODO: check attributes instead of "always two"
          my $a=pop $env->{'commands'};
          my $b=pop $env->{'commands'};
+         $env->{'bibFile'}->{$file}=1;
          processBibOption($env,0);
          push $env->{'commands'},$b,$a;
        }
