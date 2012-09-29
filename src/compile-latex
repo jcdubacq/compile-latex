@@ -926,7 +926,7 @@ sub usage {
     $option="usage";
   }
   my $cmd="pod2txt";
-  my $release="0.5.1";
+  my $release="0.6";
   my ($a,$out,$b);
   if ($option eq "man"||$option eq "nroff") {
     ($a,$out,$b)=@{&executeCommand("","pod2man","$0","--center","User commands","--release",$release)};
