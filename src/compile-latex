@@ -180,11 +180,22 @@ sub initStemFile {
 }
 
 sub parseARGV {
+  my $_;
   my @args=();
   my $persist=shift @_;
   my $env=shift @_;
   my @savedopts=();
   my @lonearg=();
+  my %shortopts=(
+                 'j' => '--jobname',
+                 'i' => '--index-file-suffix',
+                 'o' => '--index-output-suffix',
+                 'M' => '--make',
+                 'I' => '--gitignore',
+                 'h' => '--help',
+                 'l' => '--load-all',
+                 'L' => '--load-none'
+                );
   my @loneopts=('--help','--depends','--outputs','--make','--quiet',
                 '--index','--man','--internals','--usage',
                 '--nroff','--bibtex','--manual','--discover','--gitignore',
@@ -198,6 +209,17 @@ sub parseARGV {
   my $m;
  ARGS: while ($#_>-1) {
     $_=shift @_;
+    if (/^-[a-zA-Z]+$/) {
+      foreach $m (reverse 1..length($_)-1) {
+        my $xk=substr($_,$m,1);
+        if (!exists($shortopts{$xk})) {
+          print STDERR "No file specified\n";
+          &usage('usage');
+        }
+        unshift @_,$shortopts{$xk};
+      }
+      next ARGS;
+    }
     foreach $m (@loneopts) {
       if (/^$m$/) {
         push @args,[$_];
