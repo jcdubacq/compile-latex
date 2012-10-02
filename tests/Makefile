@@ -39,10 +39,10 @@ depends-as-is::
 # start automatic section for 02
 all:: 02.pdf
 do::
-	$(COMPILELATEX) --load-none --jobname 02 --discover 02.tex
+	$(COMPILELATEX) --load-none --jobname 02 --index-file-suffix adx --index-output-suffix and --index-file-suffix idx --manual 02.tex
 02.log 02.pdf 02.md5 02.ilg:\
 02.tex
-	$(COMPILELATEX) --load-none --jobname 02 --discover 02.tex
+	$(COMPILELATEX) --load-none --jobname 02 --index-file-suffix adx --index-output-suffix and --index-file-suffix idx --manual 02.tex
 distclean::
 	rm -f 02.adx 02.and 02.aux 02.idx 02.ilg 02.ind 02.log 02.md5 02.pdf
 clean::

@@ -99,8 +99,12 @@ sub initInputFile {
   my @infile=();
   while (<FILE>) {
     chomp;
-    next unless /^%+\s*compile-latex\s+option\s*:(.*$)/;
-    push @infile,$1;
+    next unless /^%+\s*compile-latex\s+option(s?)\s*:(.*$)/;
+    if ($1) {
+      push @infile,map {&unquote($_)} split(/ /,$2)
+    } else {
+      push @infile,$2;
+    }
   }
   close FILE;
   if ($#infile != -1) {
@@ -1288,9 +1292,6 @@ sub xlog {
 }
 
 
-# command = { 'proc' -> \&toto, 'args' -> {} } and returns 0 (to be redone) or 1 (not to be redone)
-# command = { 'proc' -> \&genericRunner, 'args' -> {'in'=>$input,'tagline'=>$tagline,'cmdline'=>['some','prog','with','options'] }} and returns 0 (to be redone) or 1 (not to be redone)
-
 =pod
 
 =head1 DESCRIPTION
@@ -1304,7 +1305,8 @@ compile-latex also manages makeindex. It supports the use of the
 C<multind> and C<index> packages for multiple indexes; however, the
 automatic mode only uses the C<.idx> to C<.ind> standard index.
 
-compile-latex also manages bibtex.
+compile-latex also manages bibtex and any combination of packages that
+use only bibtex as an auxiliary program.
 
 compile-latex remembers from one compilation to another the index
 options it was given. It is not necessary to repeat them (not harmful
@@ -1344,6 +1346,14 @@ more spaces, the string C<"option">, zero or more spaces, the string
 C<":"> and one option (without any excess spaces), will be considered as
 an option. These options will not be stored for later invocations, since
 they are in the file anyway.
+
+Another format for in-file options is as follows: one or more percent
+char, zero or more spaces, the string C<compile-latex>, one or more
+spaces, the string C<"options"> (remark the plural), zero or more
+spaces, the string C<":"> and options separated by spaces (spaces at the
+end or the beginning will be removed). The options can embed spaces;
+they will be quoted (see L</"QUOTING">) (thus, do not forget to quote
+the other chars if you ever need them).
 
 =head1 QUOTING
 

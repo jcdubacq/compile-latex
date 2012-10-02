@@ -129,7 +129,8 @@ compile-latex also manages makeindex. It supports the use of the
 `multind` and `index` packages for multiple indexes; however, the
 automatic mode only uses the `.idx` to `.ind` standard index.
 
-compile-latex also manages bibtex.
+compile-latex also manages bibtex and any combination of packages that
+use only bibtex as an auxiliary program.
 
 compile-latex remembers from one compilation to another the index
 options it was given. It is not necessary to repeat them (not harmful
@@ -163,6 +164,14 @@ more spaces, the string `"option"`, zero or more spaces, the string
 `":"` and one option (without any excess spaces), will be considered as
 an option. These options will not be stored for later invocations, since
 they are in the file anyway.
+
+Another format for in-file options is as follows: one or more percent
+char, zero or more spaces, the string `compile-latex`, one or more
+spaces, the string `"options"` (remark the plural), zero or more
+spaces, the string `":"` and options separated by spaces (spaces at the
+end or the beginning will be removed). The options can embed spaces;
+they will be quoted (see ["QUOTING"](#quoting)) (thus, do not forget to quote
+the other chars if you ever need them).
 
 # QUOTING
 
