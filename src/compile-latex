@@ -151,12 +151,12 @@ sub initStemFile {
   $hashenv->{'input'}=$inputfile;
   my $loadedopts=&loadFiles($hashenv,$hashfile);
   if ($CLIenv->{'load'} & 0x2) {
-    my $CLIprogname=undef;
-    $CLIprogname=$CLIenv->{'progname'} if (exists($CLIenv->{'progname'}));
+    my $CLIvariant=undef;
+    $CLIvariant=$CLIenv->{'variant'} if (exists($CLIenv->{'variant'}));
     &parseARGV(1,$hashenv,@$loadedopts);
-    my $HASHprogname=undef;
-    $HASHprogname=$hashenv->{'progname'} if (exists($hashenv->{'progname'}));
-    if (defined($CLIprogname) and defined($HASHprogname) and $CLIprogname ne $HASHprogname) {
+    my $HASHvariant=undef;
+    $HASHvariant=$hashenv->{'variant'} if (exists($hashenv->{'variant'}));
+    if (defined($CLIvariant) and defined($HASHvariant) and $CLIvariant ne $HASHvariant) {
       # We changed the program name ! Forget everything
       $hashenv=mergeEnvironments($runtimeenv,$hashenv);
     }
@@ -166,16 +166,16 @@ sub initStemFile {
     $fullenv=mergeEnvironments($fullenv,$INPUTenv);
   }
   $fullenv->{'savedopts'}=[];
-  if (exists($fullenv->{'progname'})) {
-    push $fullenv->{'savedopts'},'--progname',$fullenv->{'progname'};
+  if (exists($fullenv->{'variant'})) {
+    push $fullenv->{'savedopts'},'--variant',$fullenv->{'variant'};
   }
   # include some default values
   $fullenv=mergeEnvironments($fullenv,
                              {
                               'auto'=>1,
-                              'progname'=>'pdflatex',
+                              'variant'=>'pdflatex',
                              });
-  &latexProgname($fullenv);
+  &latexVariant($fullenv);
   &processIgnore($fullenv);
   &processBibOption($fullenv,1);
   &processIndexOption($fullenv);
@@ -244,7 +244,7 @@ C<-MI>), but only the last one may have a value.
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
                '--input','--debug','--bibtex-file','--bibtex-file-suffix',
-               '--makefile','--makefile-prefix','--jobname','--progname'
+               '--makefile','--makefile-prefix','--jobname','--variant'
               );
   my $m;
  ARGS: while ($#_>-1) {
@@ -290,7 +290,7 @@ C<-MI>), but only the last one may have a value.
 B<--jobname>|B<-j> I<job> Use this jobname. Can be repeated to loop
 through several jobnames. I<Not persistent>.
 
-B<--progname> I<compilation chain name> Changes the compilation chain
+B<--variant> I<compilation chain name> Changes the compilation chain
 (see L</"COMPILATION CHAINS">).
 
 B<--debug> I<n> Change the verbosity level to I<n> (see
@@ -330,8 +330,8 @@ B<--load-none>|B<-L> Load options from command line only.
       $env->{'load'}=2;
     } elsif ($arg eq '--jobname') {
       push $env->{'jobname'},$val;
-    } elsif ($arg eq '--progname') {
-      $env->{'progname'}=$val;
+    } elsif ($arg eq '--variant') {
+      $env->{'variant'}=$val;
     } elsif ($arg eq '--bibtex') {
       $env->{'bibFile'}->{'suffix://aux'}=1;
 
@@ -795,24 +795,24 @@ sub autoDiscovery {
   return 1;
 }
 
-sub latexProgname {
+sub latexVariant {
 
 =pod
 
 =head2 COMPILATION CHAINS
 
-B<--progname pdflatex> (default) C<pdflatex file.tex>
+B<--variant pdflatex> (default) C<pdflatex file.tex>
 
-B<--progname dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
+B<--variant dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
 
-B<--progname xelatex> C<xelatex file.tex;xdvipdfmx file.xdv>
+B<--variant xelatex> C<xelatex file.tex;xdvipdfmx file.xdv>
 
-B<--progname lualatex> C<lualatex file.tex>
+B<--variant lualatex> C<lualatex file.tex>
 
 =cut
 
   my $env=shift @_;
-  my $p=$env->{'progname'};
+  my $p=$env->{'variant'};
   if ($p eq 'pdflatex') {
     $env->{'latexname'}='pdflatex';
     $env->{'dviname'}='';
