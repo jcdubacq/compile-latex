@@ -153,3 +153,19 @@ depends::
 depends-as-is::
 	$(COMPILELATEX) --ignore --makefile Makefile --jobname 07 07.tex
 # stop automatic section for 07
+# start automatic section for 08
+all:: 08.pdf
+do::
+	$(COMPILELATEX) --load-none --jobname 08 --progname xelatex --discover 08.tex
+08.md5 08.log 08.pdf:\
+08.tex
+	$(COMPILELATEX) --load-none --jobname 08 --progname xelatex --discover 08.tex
+distclean::
+	rm -f 08.aux 08.log 08.md5 08.pdf
+clean::
+	rm -f 08.aux 08.log 08.md5
+depends::
+	$(COMPILELATEX) --load-none --ignore --makefile Makefile --jobname 08 08.tex
+depends-as-is::
+	$(COMPILELATEX) --ignore --makefile Makefile --jobname 08 08.tex
+# stop automatic section for 08

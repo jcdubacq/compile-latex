@@ -805,6 +805,10 @@ B<--progname pdflatex> (default) C<pdflatex file.tex>
 
 B<--progname dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
 
+B<--progname xelatex> C<xelatex file.tex;xdvipdfmx file.xdv>
+
+B<--progname lualatex> C<lualatex file.tex>
+
 =cut
 
   my $env=shift @_;
@@ -818,6 +822,25 @@ B<--progname dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
     $env->{'dviname'}='dvips';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.ps';
+  } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvipdf';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvipdfm';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'xelatex') {
+    $env->{'latexname'}='xelatex';
+    $env->{'dviname'}='dvipdfmx';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'lualatex') {
+    $env->{'latexname'}='lualatex';
+    $env->{'dviname'}='';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } else {
     # unknown chain
     die("Unknown latex chain: $p")
@@ -992,6 +1015,8 @@ sub postVitam {
 }
 
 sub postMortem {
+  # TODO: here, we should have a list of forbidden places
+  # /proc, $TMPDIR is a good place to start with
   my $_;
   my ($env,$key,$tmpfile)=@_;
   open TRACE,"$tmpfile";
@@ -999,18 +1024,24 @@ sub postMortem {
     if (/^[0-9]+\s+access\("([^"]*)",.R_OK\)\s*=\s*[-0-9]*/) {
       my $file=$1;
       $file =~ s/^\.\///g;
+      next if ($file =~ /^\/proc/);
+      next if ($file =~ /^\/tmp/);
       $env->{'in'}->{$key}->{$file}="1";
       next;
     }
     if (/^[0-9]+\s+open\("([^"]*)",.O_RDONLY.*\)\s*=\s*[-0-9]*$/) {
       my $file=$1;
       $file =~ s/^\.\///g;
+      next if ($file =~ /^\/proc/);
+      next if ($file =~ /^\/tmp/);
       $env->{'in'}->{$key}->{$file}="1";
       next;
     }
     if (/^[0-9]+\s+open\("([^"]*)",.O_WRONLY.*\)\s*=\s*[-0-9]*$/) {
       my $file=$1;
       $file =~ s/^\.\///g;
+      next if ($file =~ /^\/proc/);
+      next if ($file =~ /^\/tmp/);
       $env->{'out'}->{$key}->{$file}="1";
       next;
     }
