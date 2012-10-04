@@ -52,6 +52,19 @@ my $defaultenv={
                 'inputfiles'       =>[],
                 'jobname'          =>[],
                };
+my $runtimeenv={
+                'inputfiles'       =>[],
+                'jobname'          =>[],
+                'cruftin'          =>{},
+                'cruftout'         =>{},
+                'oldin'            =>{},
+                'oldout'           =>{},
+                'in'               =>{},
+                'out'              =>{},
+                'hash'             =>{},
+                'pseudofile'       =>{},
+                'commands'         =>[],
+               };
 
 # launch
 
@@ -132,30 +145,37 @@ sub initStemFile {
   my $stem=shift @_;
   my $hashfile="$stem.md5";
   &xlog(2,"▲ Processing $stem out of $inputfile\n");
-  my $hashenv=clone($defaultenv);
-  $hashenv->{'cruftin'}={};
-  $hashenv->{'cruftout'}={};
-  $hashenv->{'oldin'}={};
-  $hashenv->{'oldout'}={};
-  $hashenv->{'in'}={};
-  $hashenv->{'out'}={};
-  $hashenv->{'hash'}={};
-  $hashenv->{'pseudofile'}={};
-  $hashenv->{'commands'}=[];
+  my $hashenv=clone($runtimeenv);
   $hashenv->{'stem'}=$stem;
   $hashenv->{'hashfile'}=$hashfile;
   $hashenv->{'input'}=$inputfile;
   my $loadedopts=&loadFiles($hashenv,$hashfile);
   if ($CLIenv->{'load'} & 0x2) {
+    my $CLIprogname=undef;
+    $CLIprogname=$CLIenv->{'progname'} if (exists($CLIenv->{'progname'}));
     &parseARGV(1,$hashenv,@$loadedopts);
+    my $HASHprogname=undef;
+    $HASHprogname=$hashenv->{'progname'} if (exists($hashenv->{'progname'}));
+    if (defined($CLIprogname) and defined($HASHprogname) and $CLIprogname ne $HASHprogname) {
+      # We changed the program name ! Forget everything
+      $hashenv=mergeEnvironments($runtimeenv,$hashenv);
+    }
   }
   my $fullenv=mergeEnvironments($CLIenv,$hashenv);
   if ($CLIenv->{'load'} & 0x1) {
     $fullenv=mergeEnvironments($fullenv,$INPUTenv);
   }
-  # include some default values
-  $fullenv=mergeEnvironments($fullenv,{'auto'=>1});
   $fullenv->{'savedopts'}=[];
+  if (exists($fullenv->{'progname'})) {
+    push $fullenv->{'savedopts'},'--progname',$fullenv->{'progname'};
+  }
+  # include some default values
+  $fullenv=mergeEnvironments($fullenv,
+                             {
+                              'auto'=>1,
+                              'progname'=>'pdflatex',
+                             });
+  &latexProgname($fullenv);
   &processIgnore($fullenv);
   &processBibOption($fullenv,1);
   &processIndexOption($fullenv);
@@ -224,7 +244,7 @@ C<-MI>), but only the last one may have a value.
   my @oneopts=('--separator','--index-file','--index-style','--index-output',
                '--index-file-suffix','--index-output-suffix','--index-options',
                '--input','--debug','--bibtex-file','--bibtex-file-suffix',
-               '--makefile','--makefile-prefix','--jobname',
+               '--makefile','--makefile-prefix','--jobname','--progname'
               );
   my $m;
  ARGS: while ($#_>-1) {
@@ -267,8 +287,11 @@ C<-MI>), but only the last one may have a value.
 
 =head2 GENERIC OPTIONS
 
-B<--jobname>|B<-j> Use this jobname. Can be repeated to loop through several
-jobnames. I<Not persistent>.
+B<--jobname>|B<-j> I<job> Use this jobname. Can be repeated to loop
+through several jobnames. I<Not persistent>.
+
+B<--progname> I<compilation chain name> Changes the compilation chain
+(see L</"COMPILATION CHAINS">).
 
 B<--debug> I<n> Change the verbosity level to I<n> (see
 L</"DEBUG">). I<Not persistent>.
@@ -307,6 +330,8 @@ B<--load-none>|B<-L> Load options from command line only.
       $env->{'load'}=2;
     } elsif ($arg eq '--jobname') {
       push $env->{'jobname'},$val;
+    } elsif ($arg eq '--progname') {
+      $env->{'progname'}=$val;
     } elsif ($arg eq '--bibtex') {
       $env->{'bibFile'}->{'suffix://aux'}=1;
 
@@ -615,17 +640,9 @@ sub pseudofileBib {
   } else {
     $env->{'pseudofile'}->{$outputfile}=$data;
   }
-  foreach (keys %{$out->{$key}}) {
-    if (!exists($hash->{$_})) {
-      $hash->{$_}="?";
-    }
-  }
-  foreach (keys %{$in->{$key}}) {
-    if (!exists($hash->{$_})) {
-      &hashFile($_,$env);
-    }
-    $in->{$key}->{$_}=$hash->{$_};
-  }
+  hashFile($outputfile,$env);
+  hashFile($inputfile,$env);
+  $in->{$key}->{$inputfile}=$hash->{$inputfile};
   return 0;
 }
 
@@ -644,6 +661,19 @@ sub loopCommands {
   }
   unshift $env->{'commands'},{'proc' => \&latexFile,'args' => {}};
   unshift $env->{'commands'},{'proc' => \&newRound,'args' => {}};
+  if ($env->{'dviname'} ne '') {
+    my $cmdline=[$env->{'dviname'},$env->{'inputDviFile'}];
+    my $tagline=$env->{'dviname'}.' '.$env->{'inputDviFile'};
+    push $env->{'commands'},{
+                             'proc' => \&genericRunner,
+                             'args' => {
+                                        'input'=>$env->{'inputDviFile'},
+                                        'tagline'=>$tagline,
+                                        'cmdline'=>$cmdline,
+                                        'epilogue'=>1,
+                                       },
+                             'keepatend' => 1};
+  }
   push $env->{'commands'},{'proc' => \&storeCruft,'args' => {},'keepatend'=>1};
   push $env->{'commands'},{'proc' => \&storeFiles,'args' => {},'keepatend'=>1};
   # Heuristic: anticipating the input files
@@ -663,7 +693,7 @@ sub loopCommands {
       $i++;
       my $comm=$env->{'commands'}[$i];
       my $func=$comm->{'proc'};
-      my $ret=&$func($env,$comm->{'args'},$tmpdir);
+      my $ret=&$func($env,$comm->{'args'},$tmpdir,$commandredo);
       $commandredo=1 unless ($ret);
     }
   }
@@ -746,30 +776,66 @@ sub autoDiscovery {
   REGISTER:
     if ($bib) {
       &xlog(2,"Spotted...$file",'');
-      # KLUDGE TODO: check attributes instead of "always two"
-      my $a=pop $env->{'commands'};
-      my $b=pop $env->{'commands'};
+      my @a=();
+      my $b;
+      do {
+        $b=pop $env->{'commands'};
+        if ($b and $b->{'keepatend'}) {
+          unshift @a, $b;
+        } elsif ($b) {
+          push $env->{'commands'},$b; # one too far
+          $b=0;
+        }
+      } while ($b);
       $env->{'bibFile'}->{$file}=1;
       processBibOption($env,0);
-      push $env->{'commands'},$b,$a;
+      push $env->{'commands'},@a;
     }
   }
   return 1;
 }
 
+sub latexProgname {
+
+=pod
+
+=head2 COMPILATION CHAINS
+
+B<--progname pdflatex> (default) C<pdflatex file.tex>
+
+B<--progname dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
+
+=cut
+
+  my $env=shift @_;
+  my $p=$env->{'progname'};
+  if ($p eq 'pdflatex') {
+    $env->{'latexname'}='pdflatex';
+    $env->{'dviname'}='';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvips';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.ps';
+  } else {
+    # unknown chain
+    die("Unknown latex chain: $p")
+  }
+}
+
 sub latexFile {
   my ($env,$arg,$tmpdir)=@_;
   my $tmpfile=File::Spec->catfile($tmpdir,"trace");
-  my @cmdline=('pdflatex','-interaction','batchmode','-halt-on-error',
+  my @cmdline=($env->{'latexname'},'-interaction','batchmode','-halt-on-error',
                '--jobname',$env->{'stem'},
                $env->{'input'});
   my $tagline;
   if ($env->{'stem'} ne $env->{'naturalstem'}) {
-    $tagline=('pdflatex --jobname '.$env->{'stem'}.' '.$env->{'input'});
+    $tagline=($env->{'latexname'}.' --jobname '.$env->{'stem'}.' '.$env->{'input'});
   } else {
-    $tagline=('pdflatex '.$env->{'input'});
+    $tagline=($env->{'latexname'}.' '.$env->{'input'});
   }
-  $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   my $key=&commandKey(@cmdline);
   my $mainkey=$key;
   $env->{'mainkey'}=$key;
@@ -804,11 +870,15 @@ sub latexFile {
 }
 
 sub genericRunner {
-  my ($env,$arg,$tmpdir)=@_;
+  my ($env,$arg,$tmpdir,$commandredo)=@_;
   my $input=$arg->{'input'};
   my $tmpfile=File::Spec->catfile($tmpdir,"trace");
   my @cmdline=@{$arg->{'cmdline'}};
   my $tagline=$arg->{'tagline'};
+  if ($commandredo == 1 && exists($arg->{'epilogue'})) {
+    &xlog(3,"▲ $tagline...too soon\n");
+    return 1;
+  }
   my $key=&commandKey(@cmdline);
   &forceDependency($env,$key,$input);
   my @changed=&preMortem($env,$key);
@@ -932,6 +1002,12 @@ sub postMortem {
       $env->{'in'}->{$key}->{$file}="1";
       next;
     }
+    if (/^[0-9]+\s+open\("([^"]*)",.O_RDONLY.*\)\s*=\s*[-0-9]*$/) {
+      my $file=$1;
+      $file =~ s/^\.\///g;
+      $env->{'in'}->{$key}->{$file}="1";
+      next;
+    }
     if (/^[0-9]+\s+open\("([^"]*)",.O_WRONLY.*\)\s*=\s*[-0-9]*$/) {
       my $file=$1;
       $file =~ s/^\.\///g;
@@ -957,13 +1033,22 @@ sub postMortem {
 
 sub forceDependency {
   my ($env,$key,$file)=@_;
+  &xlog(5,"Forcing dependency on $file for $key\n");
   if (!exists($env->{'oldin'}->{$key})) {
     $env->{'oldin'}->{$key}={};
   }
   return unless existFile($file);
   if (!exists($env->{'oldin'}->{$key}->{$file})) {
     $env->{'oldin'}->{$key}->{$file}="1";
+  } elsif ($file =~ m|^pseudo://[a-z]+/(.*)$|) {
+    # We have a pseudo file: remove the replaced files
+    my @f=split('//',$1);
+    foreach my $f (@f) {
+      delete $env->{'oldin'}->{$key}->{$f};
+    }
   }
+  hashFile($key,$env);
+  $env->{'in'}->{$key}->{$file}=$env->{'hash'}->{$file};
 }
 
 sub preMortem {

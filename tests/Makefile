@@ -136,3 +136,20 @@ depends::
 depends-as-is::
 	$(COMPILELATEX) --ignore --makefile Makefile --jobname 06b 06.tex
 # stop automatic section for 06b
+# start automatic section for 07
+all:: 07.ps
+do::
+	$(COMPILELATEX) --load-none --jobname 07 --progname dvips --discover 07.tex
+07.log 07.blg 07.ps 07.md5:\
+test.bib\
+07.tex
+	$(COMPILELATEX) --load-none --jobname 07 --progname dvips --discover 07.tex
+distclean::
+	rm -f 07.aux 07.bbl 07.blg 07.dvi 07.log 07.md5 07.ps
+clean::
+	rm -f 07.aux 07.bbl 07.blg 07.dvi 07.log 07.md5
+depends::
+	$(COMPILELATEX) --load-none --ignore --makefile Makefile --jobname 07 07.tex
+depends-as-is::
+	$(COMPILELATEX) --ignore --makefile Makefile --jobname 07 07.tex
+# stop automatic section for 07
