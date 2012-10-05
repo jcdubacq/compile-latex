@@ -21,8 +21,11 @@ A few short options are provided. They can be agregated (such as
 
 ## GENERIC OPTIONS
 
-__\--jobname__|__\-j__ Use this jobname. Can be repeated to loop through several
-jobnames. _Not persistent_.
+__\--jobname__|__\-j__ _job_ Use this jobname. Can be repeated to loop
+through several jobnames. _Not persistent_.
+
+__\--variant__ _compilation chain name_ Changes the compilation chain
+(see ["COMPILATION CHAINS"](#compilation chains)).
 
 __\--debug__ _n_ Change the verbosity level to _n_ (see
 ["DEBUG"](#debug)). _Not persistent_.
@@ -117,6 +120,16 @@ __\--usage__ Generate this help (short version).
 __\--man__ Generate man page.
 
 __\--nroff__ Generate man page in NROFF format.
+
+## COMPILATION CHAINS
+
+__\--variant pdflatex__ (default) `pdflatex file.tex`
+
+__\--variant dvips__|__latex+dvips__ `latex file.tex;dvips file.dvi`
+
+__\--variant xelatex__ `xelatex file.tex;xdvipdfmx file.xdv`
+
+__\--variant lualatex__ `lualatex file.tex`
 
 # DESCRIPTION
 

@@ -1016,7 +1016,7 @@ sub postVitam {
 
 sub postMortem {
   # TODO: here, we should have a list of forbidden places
-  # /proc, $TMPDIR is a good place to start with
+  # /proc is a good place to start with (xelatex uses /proc/meminfo!)
   my $_;
   my ($env,$key,$tmpfile)=@_;
   open TRACE,"$tmpfile";
@@ -1025,7 +1025,6 @@ sub postMortem {
       my $file=$1;
       $file =~ s/^\.\///g;
       next if ($file =~ /^\/proc/);
-      next if ($file =~ /^\/tmp/);
       $env->{'in'}->{$key}->{$file}="1";
       next;
     }
@@ -1033,7 +1032,7 @@ sub postMortem {
       my $file=$1;
       $file =~ s/^\.\///g;
       next if ($file =~ /^\/proc/);
-      next if ($file =~ /^\/tmp/);
+      next unless (existFile($file)); # Here to avoid tmp files
       $env->{'in'}->{$key}->{$file}="1";
       next;
     }
@@ -1041,7 +1040,7 @@ sub postMortem {
       my $file=$1;
       $file =~ s/^\.\///g;
       next if ($file =~ /^\/proc/);
-      next if ($file =~ /^\/tmp/);
+      next unless (existFile($file));
       $env->{'out'}->{$key}->{$file}="1";
       next;
     }
@@ -1121,7 +1120,7 @@ sub usage {
     $option="usage";
   }
   my $cmd="pod2txt";
-  my $release="0.7";
+  my $release="0.7.1";
   my ($a,$out,$b);
   if ($option eq "man"||$option eq "nroff") {
     ($a,$out,$b)=@{&executeCommand("","pod2man","$0","--center","User commands","--release",$release)};
