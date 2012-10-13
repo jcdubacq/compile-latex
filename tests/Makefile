@@ -139,11 +139,11 @@ depends-as-is::
 # start automatic section for 07
 all:: 07.ps
 do::
-	$(COMPILELATEX) --load-none --jobname 07 --progname dvips --discover 07.tex
+	$(COMPILELATEX) --load-none --jobname 07 --variant dvips --discover 07.tex
 07.log 07.blg 07.ps 07.md5:\
 test.bib\
 07.tex
-	$(COMPILELATEX) --load-none --jobname 07 --progname dvips --discover 07.tex
+	$(COMPILELATEX) --load-none --jobname 07 --variant dvips --discover 07.tex
 distclean::
 	rm -f 07.aux 07.bbl 07.blg 07.dvi 07.log 07.md5 07.ps
 clean::
@@ -156,10 +156,10 @@ depends-as-is::
 # start automatic section for 08
 all:: 08.pdf
 do::
-	$(COMPILELATEX) --load-none --jobname 08 --progname xelatex --discover 08.tex
+	$(COMPILELATEX) --load-none --jobname 08 --variant xelatex --discover 08.tex
 08.md5 08.log 08.pdf:\
 08.tex
-	$(COMPILELATEX) --load-none --jobname 08 --progname xelatex --discover 08.tex
+	$(COMPILELATEX) --load-none --jobname 08 --variant xelatex --discover 08.tex
 distclean::
 	rm -f 08.aux 08.log 08.md5 08.pdf
 clean::
