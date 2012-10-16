@@ -161,9 +161,9 @@ do::
 08.tex
 	$(COMPILELATEX) --load-none --jobname 08 --variant xelatex --discover 08.tex
 distclean::
-	rm -f 08.aux 08.log 08.md5 08.pdf
+	rm -f 08.aux 08.log 08.md5 08.pdf 08.xdv
 clean::
-	rm -f 08.aux 08.log 08.md5
+	rm -f 08.aux 08.log 08.md5 08.xdv
 depends::
 	$(COMPILELATEX) --load-none --ignore --makefile Makefile --jobname 08 08.tex
 depends-as-is::

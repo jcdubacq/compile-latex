@@ -805,7 +805,7 @@ B<--variant pdflatex> (default) C<pdflatex file.tex>
 
 B<--variant dvips>|B<latex+dvips> C<latex file.tex;dvips file.dvi>
 
-B<--variant xelatex> C<xelatex file.tex;xdvipdfmx file.xdv>
+B<--variant xelatex> C<xelatex --no-pdf> file.tex;xdvipdfmx file.xdv>
 
 B<--variant lualatex> C<lualatex file.tex>
 
@@ -833,8 +833,8 @@ B<--variant lualatex> C<lualatex file.tex>
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'xelatex') {
-    $env->{'latexname'}='xelatex';
-    $env->{'dviname'}='dvipdfmx';
+    $env->{'latexname'}='xelatex --no-pdf';
+    $env->{'dviname'}='xdvipdfmx';
     $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'lualatex') {
@@ -850,7 +850,7 @@ B<--variant lualatex> C<lualatex file.tex>
 sub latexFile {
   my ($env,$arg,$tmpdir)=@_;
   my $tmpfile=File::Spec->catfile($tmpdir,"trace");
-  my @cmdline=($env->{'latexname'},'-interaction','batchmode','-halt-on-error',
+  my @cmdline=(split(' ',$env->{'latexname'}),'-interaction','batchmode','-halt-on-error',
                '--jobname',$env->{'stem'},
                $env->{'input'});
   my $tagline;
