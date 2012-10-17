@@ -90,7 +90,7 @@ sub init {
   foreach my $filename (@{$CLIenv->{inputfiles}}) {
     $filename.='.tex' unless $filename =~ /\.tex$/;
     if (!existFile($filename)) {
-      $filename =~ s/\.tex$// if /\.tex$/;
+      $filename =~ s/\.tex$// if $filename =~ /\.tex$/;
     }
     if (existFile($filename)) {
       &initInputFile($CLIenv,$filename);
@@ -1120,7 +1120,7 @@ sub usage {
     $option="usage";
   }
   my $cmd="pod2txt";
-  my $release="0.7.1";
+  my $release="0.7.2";
   my ($a,$out,$b);
   if ($option eq "man"||$option eq "nroff") {
     ($a,$out,$b)=@{&executeCommand("","pod2man","$0","--center","User commands","--release",$release)};
