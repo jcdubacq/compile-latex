@@ -1277,11 +1277,39 @@ sub outputGitignore {
     $snip.="/$_\n";
   }
   &outputSection($file,$env->{'stem'},$snip);
+  return 1;
 }
 sub outputSvnignore {
   my ($env)=@_;
-  print STDERR "Not implemented yet\n";
-  return;
+  my $snip;
+  my ($a,$out,$b)=@{&executeCommand("","svn","propget","svn:ignore",".")};
+  if ($a != 0) {
+    print STDERR "Could not get svn:ignore properties\n";
+    return 0;
+  }
+  my $tmpdir=tempdir(CLEANUP => 1);
+  my $tmpfile=File::Spec->catfile($tmpdir,"trace");
+  open FILE,">$tmpfile";
+  my @a=split(/\n/,$out);
+  foreach $snip (@a) {
+    chomp $snip;
+    print FILE "$snip\n" unless $snip =~ /^$/;
+  }
+  close FILE;
+  my %list=();
+  foreach (&outputInternals($env),&outputOutputs($env)) {
+    $list{$_}++;
+  }
+  foreach (sort keys %list) {
+    $snip.="$_\n";
+  }
+  &outputSection($tmpfile,$env->{'stem'},$snip);
+  ($a,$out,$b)=@{&executeCommand("","svn","propset","svn:ignore","-F",$tmpfile,".")};
+  if ($a != 0) {
+    print STDERR "Could not get svn:ignore properties\n";
+    return 0;
+  }
+  return 1;
 }
 sub savedIgnore {
   my ($env)=@_;
