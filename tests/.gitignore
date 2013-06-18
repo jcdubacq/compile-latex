@@ -130,3 +130,9 @@
 /08.pdf
 /08.xdv
 # stop automatic section for 08
+# start automatic section for 09
+/09.aux
+/09.log
+/09.md5
+/09.pdf
+# stop automatic section for 09

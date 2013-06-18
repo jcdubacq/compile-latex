@@ -169,3 +169,19 @@ depends::
 depends-as-is::
 	$(COMPILELATEX) --ignore --makefile Makefile --jobname 08 08.tex
 # stop automatic section for 08
+# start automatic section for 09
+all:: 09.pdf
+do::
+	$(COMPILELATEX) --load-none --jobname 09 --discover 09.tex
+09.log 09.pdf 09.md5:\
+09.tex
+	$(COMPILELATEX) --load-none --jobname 09 --discover 09.tex
+distclean::
+	rm -f 09.aux 09.log 09.md5 09.pdf
+clean::
+	rm -f 09.aux 09.log 09.md5
+depends::
+	$(COMPILELATEX) --load-none --ignore --makefile Makefile --jobname 09 09.tex
+depends-as-is::
+	$(COMPILELATEX) --ignore --makefile Makefile --jobname 09 09.tex
+# stop automatic section for 09
