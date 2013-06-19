@@ -378,7 +378,6 @@ sub outFinish() {
 sub initOptions {
   $optionContext={};
   $optionContext->{'includedFiles'}={};
-  $optionContext->{'variant'}='pdflatex';
   $optionContext->{'verbosity'}=$outContext->{'verbosity'};
   $optionContext->{'availableHelps'}={
                                       'help' => 1,
@@ -417,25 +416,37 @@ sub initOptions {
        '--nroff' => [ '--help-action', 'nroff' ],
       };
   $optionContext->{'targets'}={};
-  $optionContext->{'cmdline'}={};
-  $optionContext->{'jobname'}={};
+  $optionContext->{'variant'}='pdflatex';
   $optionContext->{'chdir'}=1;
   $optionContext->{'filter'}=0;
   $optionContext->{'ignoreglobal'}=1;
 }
 sub checkOptionArg {
-  my ($optionContext,$x,$option,$available,$where)=@_;
+  my ($oc,$x,$option,$available,$where)=@_;
   my $optname=$option->[$x];
   &finish(1,"Wrong option: $optname must be followed by one argument") unless defined($option->[$x+1]);
   my $cat=$option->[$x+1];
   if ( $available and !defined($optionContext->{$available}->{$cat}) ) {
     &finish(1,"Wrong option: $optname must be followed by one of \"".join('" or "',sort keys %{$optionContext->{$available}}).'"');
   }
-  $optionContext->{$where}->{$cat}=1 if $where;
+  $oc->{$where}->{$cat}=1 if $where;
   return $cat;
+}
+sub mergeOptions {
+  my ($in,$out)=@_;
+  print Dumper($in,$out);
+  foreach my $key (keys %$out) {
+    if (ref($out->{$key}) eq 'HASH') {
+      $in->{$key}={} unless defined($in->{$key});
+      &mergeOptions($in->{$key},$out->{$key});
+    } else {
+      $in->{$key}=$out->{$key};
+    }
+  }
 }
 sub parseOptions {
   my ($optionContext,$desc,$options)=@_;
+  my $localOptions={};
   my @option=@$options;
   &out(1,'init',"Treating $desc options");
   &out(2,'init',$options);
@@ -467,20 +478,54 @@ sub parseOptions {
       &finish(1,"Wrong option: --verbosity must be followed by a category and an integer") unless $level =~ /^[0-9]+$/;
       $optionContext->{'verbosity'}->{$cat}=$level;
     } elsif ($arg eq '--variant') {
-      &checkOptionArg($optionContext,$x++,$options,'availableVariants');
-      $optionContext->{'variant'}=$option[$x];
+      &checkOptionArg($localOptions,$x++,$options,'availableVariants');
+      $localOptions->{'variant'}=$option[$x];
     } elsif ($arg eq '--no-chdir') {
-      $optionContext->{'chdir'}=0;
+      $localOptions->{'chdir'}=0;
     } elsif ($arg eq '--chdir') {
-      $optionContext->{'chdir'}=1;
+      $localOptions->{'chdir'}=1;
+    } elsif ($arg eq '--no-filter') {
+      $localOptions->{'filter'}=0;
     } elsif ($arg eq '--filter') {
-      $optionContext->{'filter'}=1;
+      $localOptions->{'filter'}=1;
+    } elsif ($arg eq '--no-global') {
+      $localOptions->{'ignoreglobal'}=1;
     } elsif ($arg eq '--global') {
-      $optionContext->{'ignoreglobal'}=0;
+      $localOptions->{'ignoreglobal'}=0;
+    } elsif ($arg eq '--index-file') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'indexFile');
+    } elsif ($arg eq '--jobname-only') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
     } elsif ($arg eq '--jobname') {
-      &checkOptionArg($optionContext,$x++,$options,undef,'jobname');
+      my $jobname=&checkOptionArg(undef,$x++,$options);
+      my $lo=$localOptions;
+      $localOptions={};
+      $localOptions->{'jobnameLocal'}={};
+      $localOptions->{'jobname'}->{$jobname}=1;
+      if (defined($lo->{'jobnameOnly'})) {
+        foreach my $k (keys %{$lo->{'jobnameOnly'}}) {
+          $localOptions->{'jobname'}->{$k}=1;
+        }
+        delete $lo->{'jobnameOnly'};
+      }
+      if (defined($lo->{'jobname'})) {
+        foreach my $k (keys %{$lo->{'jobnameLocal'}}) {
+          $localOptions->{'jobname'}->{$k}=1;
+        }
+        delete $lo->{'jobname'};
+      }
+      if (defined($lo->{'jobnameLocal'})) {
+        foreach my $k (keys %{$lo->{'jobnameLocal'}}) {
+          $localOptions->{'jobnameLocal'}->{$k}=&clone($lo->{$k});
+          delete $lo->{$k};
+        }
+        delete $lo->{'jobnameLocal'};
+      }
+      $localOptions->{'jobnameLocal'}->{$jobname}=$lo;
     } elsif ($arg eq '--file') {
-      &checkOptionArg($optionContext,$x++,$options,undef,'includedFiles');
+      my $source=&checkOptionArg($optionContext,$x++,$options,undef,'includedFiles');
+      $optionContext->{'sourceLocal'}->{$source}=&clone($localOptions);
+      $localOptions={};
     } elsif (
              defined($optionContext->{'targets'}->{$arg}) or
              defined($optionContext->{'standardTargets'}->{$arg}) or
@@ -495,8 +540,14 @@ sub parseOptions {
         &finish(1,"Wrong option: unknown option $arg in $desc");
       }
       $optionContext->{'includedFiles'}->{$arg}=1;
+      $optionContext->{'sourceLocal'}->{$arg}=&clone($localOptions);
+      $localOptions={};
     }
     $x++;
+  }
+  if (scalar keys $localOptions > 0) {
+    &out(2,'init',"Merging remaining local options");
+    &mergeOptions($optionContext,$localOptions);
   }
 }
 sub parseTarget {
@@ -527,11 +578,12 @@ sub parseARGV {
   if (scalar keys %{$optionContext->{'actions'}} == 0) {
     $optionContext->{'actions'}->{'build'}=1;
   }
+  &out(3,'init',$optionContext);
   if (scalar keys %{$optionContext->{'includedFiles'}} == 0 and
       !defined($optionContext->{'actions'}->{'help'})) {
     &finish(3,"compile-latex needs a source file");
   }
-  &out(3,'init',$optionContext);
+  &finish(0);
 }
 
 # Help
