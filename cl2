@@ -446,6 +446,8 @@ sub mergeOptions {
 sub parseOptions {
   my ($optionContext,$desc,$options)=@_;
   my $localOptions={};
+  my $lastindex='.idx';
+  my $lastindexissuffix=1;
   my @option=@$options;
   &out(1,'init',"Treating $desc options");
   &out(2,'init',$options);
@@ -492,8 +494,20 @@ sub parseOptions {
       $localOptions->{'ignoreglobal'}=1;
     } elsif ($arg eq '--global') {
       $localOptions->{'ignoreglobal'}=0;
-    } elsif ($arg eq '--index-file') {
-      &checkOptionArg($localOptions,$x++,$options,undef,'indexFile');
+    } elsif ($arg eq '--index-output') {
+      my $idx=&checkOptionArg(undef,$x++,$options);
+      &out(1,'err',"Overwriting property index-output for $lastindex/$lastindexissuffix") if defined($localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix});
+      $localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix}->{'0'}=$idx;
+    } elsif ($arg eq '--index-output-suffix') {
+      my $idx=&checkOptionArg(undef,$x++,$options);
+      &out(1,'err',"Overwriting property index-output for $lastindex/$lastindexissuffix") if defined($localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix});
+      $localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix}->{'1'}=$idx;
+    } elsif ($arg eq '--index-input') {
+      $lastindex=&checkOptionArg($localOptions,$x++,$options,undef,'indexFile');
+      $lastindexissuffix=0;
+    } elsif ($arg eq '--index-input-suffix') {
+      $lastindex=&checkOptionArg($localOptions,$x++,$options,undef,'indexFileSuffix');
+      $lastindexissuffix=1;
     } elsif ($arg eq '--jobname-only') {
       &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
     } elsif ($arg eq '--jobname') {
@@ -521,10 +535,6 @@ sub parseOptions {
         delete $lo->{'jobnameLocal'};
       }
       $localOptions->{'jobnameLocal'}->{$jobname}=$lo;
-    } elsif ($arg eq '--file') {
-      my $source=&checkOptionArg($optionContext,$x++,$options,undef,'includedFiles');
-      $optionContext->{'sourceLocal'}->{$source}=&clone($localOptions);
-      $localOptions={};
     } elsif (
              defined($optionContext->{'targets'}->{$arg}) or
              defined($optionContext->{'standardTargets'}->{$arg}) or
@@ -537,6 +547,9 @@ sub parseOptions {
     } else {
       if (defined($optionContext->{'nofiles'})) {
         &finish(1,"Wrong option: unknown option $arg in $desc");
+      }
+      if ($arg eq '--file') {
+        $arg=&checkOptionArg($optionContext,$x++,$options,undef,'includedFiles');
       }
       $optionContext->{'includedFiles'}->{$arg}=1;
       $optionContext->{'sourceLocal'}->{$arg}=&clone($localOptions);
