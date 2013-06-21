@@ -338,7 +338,7 @@ sub outIdle() {
     $out='';
   }
   goto END unless (scalar @fulllines);
-  if ($optionContext->{'filter'}) {
+  if ($outContext->{'filter'}) {
     $outContext->{'outStringPast'}=[] unless defined($outContext->{'outStringPast'});
     my $past=$outContext->{'outStringPast'};
     my $alert=0;
@@ -434,7 +434,6 @@ sub checkOptionArg {
 }
 sub mergeOptions {
   my ($in,$out)=@_;
-  print Dumper($in,$out);
   foreach my $key (keys %$out) {
     if (ref($out->{$key}) eq 'HASH') {
       $in->{$key}={} unless defined($in->{$key});
@@ -460,6 +459,7 @@ sub parseOptions {
       $x++;
       while (defined($option[$x])) {
         $optionContext->{'includedFiles'}->{$option[$x]}=1;
+        $x++;
       }
     } elsif ($arg eq '--help-action') {
       &checkOptionArg($optionContext,$x++,$options,'availableHelps','help');
@@ -500,7 +500,6 @@ sub parseOptions {
       my $jobname=&checkOptionArg(undef,$x++,$options);
       my $lo=$localOptions;
       $localOptions={};
-      $localOptions->{'jobnameLocal'}={};
       $localOptions->{'jobname'}->{$jobname}=1;
       if (defined($lo->{'jobnameOnly'})) {
         foreach my $k (keys %{$lo->{'jobnameOnly'}}) {
@@ -509,14 +508,14 @@ sub parseOptions {
         delete $lo->{'jobnameOnly'};
       }
       if (defined($lo->{'jobname'})) {
-        foreach my $k (keys %{$lo->{'jobnameLocal'}}) {
+        foreach my $k (keys %{$lo->{'jobname'}}) {
           $localOptions->{'jobname'}->{$k}=1;
         }
         delete $lo->{'jobname'};
       }
       if (defined($lo->{'jobnameLocal'})) {
         foreach my $k (keys %{$lo->{'jobnameLocal'}}) {
-          $localOptions->{'jobnameLocal'}->{$k}=&clone($lo->{$k});
+          $localOptions->{'jobnameLocal'}->{$k}=&clone($lo->{'jobnameLocal'}->{$k});
           delete $lo->{$k};
         }
         delete $lo->{'jobnameLocal'};
@@ -583,7 +582,6 @@ sub parseARGV {
       !defined($optionContext->{'actions'}->{'help'})) {
     &finish(3,"compile-latex needs a source file");
   }
-  &finish(0);
 }
 
 # Help
@@ -891,7 +889,15 @@ sub processSourcefile {
   close FILE;
   $sourceContext->{'nofiles'}=1;
   $sourceContext->{'texsource'}=$filename;
+  if (defined($sourceContext->{'jobnameLocal'})) {
+    my $lo=&clone($sourceContext->{'jobnameLocal'});
+    delete($sourceContext->{'jobnameLocal'});
+    if (defined($lo->{$_[0]})) {
+      &mergeOptions($sourceContext,$lo->{$_[0]});
+    }
+  }
   &parseOptions($sourceContext,'sourcefile '.$filename,\@infile);
+  &out(1,'dev',$sourceContext);
   &out(3,'init',$sourceContext);
   my $defaultjobname=$filename;
   my $homedir = realpath(getcwd);
@@ -936,6 +942,16 @@ sub processJob {
   my $runPlan={'order' => [] };
   my $postPlan={'order' => [] };
   my $env=&clone($sourceContext);
+  &out(1,'dev',$env);
+  &out(1,'dev',"================================================");
+  if (defined($env->{'sourceLocal'})) {
+    my $lo=&clone($env->{'sourceLocal'});
+    delete($env->{'sourceLocal'});
+    if (defined($lo->{$_[0]})) {
+      &mergeOptions($env,$lo->{$_[0]});
+    }
+  }
+  &out(1,'dev',$env);
   $env->{'meta'}=File::Spec->catdir($env->{'metadir'},$jobname);
   make_path($env->{'meta'});
   # remove dirpart
@@ -1068,6 +1084,7 @@ sub latexCallback {
   my ($env,$plan,$part,$subclass)=@_;
   &out(2,'display',$subclass) if defined($subclass);
   &out(3,'display',$env->{'latexname'});
+  $outContext->{'filter'}=$env->{'filter'};
   my $status=&execCommand(@{$part->{'command'}});
   if ($status) {
     &finish(1,"TeX failed with status $status");
