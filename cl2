@@ -349,7 +349,7 @@ sub outIdle() {
       }
     }
     if ($alert) {
-      $optionContext->{'filter'}=0;
+      $outContext->{'filter'}=0;
       @fulllines=(@$past);
     } else {
       goto END;
@@ -577,6 +577,7 @@ sub parseARGV {
   if (scalar keys %{$optionContext->{'actions'}} == 0) {
     $optionContext->{'actions'}->{'build'}=1;
   }
+  &out(3,'init','At the end of the command line');
   &out(3,'init',$optionContext);
   if (scalar keys %{$optionContext->{'includedFiles'}} == 0 and
       !defined($optionContext->{'actions'}->{'help'})) {
@@ -889,15 +890,15 @@ sub processSourcefile {
   close FILE;
   $sourceContext->{'nofiles'}=1;
   $sourceContext->{'texsource'}=$filename;
-  if (defined($sourceContext->{'jobnameLocal'})) {
-    my $lo=&clone($sourceContext->{'jobnameLocal'});
-    delete($sourceContext->{'jobnameLocal'});
+  if (defined($sourceContext->{'sourceLocal'})) {
+    my $lo=&clone($sourceContext->{'sourceLocal'});
+    delete($sourceContext->{'sourceLocal'});
     if (defined($lo->{$_[0]})) {
       &mergeOptions($sourceContext,$lo->{$_[0]});
     }
   }
   &parseOptions($sourceContext,'sourcefile '.$filename,\@infile);
-  &out(1,'dev',$sourceContext);
+  &out(3,'init','At the end of the source file');
   &out(3,'init',$sourceContext);
   my $defaultjobname=$filename;
   my $homedir = realpath(getcwd);
@@ -942,8 +943,6 @@ sub processJob {
   my $runPlan={'order' => [] };
   my $postPlan={'order' => [] };
   my $env=&clone($sourceContext);
-  &out(1,'dev',$env);
-  &out(1,'dev',"================================================");
   if (defined($env->{'sourceLocal'})) {
     my $lo=&clone($env->{'sourceLocal'});
     delete($env->{'sourceLocal'});
@@ -951,7 +950,8 @@ sub processJob {
       &mergeOptions($env,$lo->{$_[0]});
     }
   }
-  &out(1,'dev',$env);
+  &out(3,'init','At the end of the job selection');
+  &out(3,'init',$env);
   $env->{'meta'}=File::Spec->catdir($env->{'metadir'},$jobname);
   make_path($env->{'meta'});
   # remove dirpart
