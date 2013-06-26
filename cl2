@@ -420,6 +420,7 @@ sub initOptions {
   $optionContext->{'chdir'}=1;
   $optionContext->{'filter'}=0;
   $optionContext->{'ignoreglobal'}=1;
+  $progContext->{'indexCount'}=0;
 }
 sub checkOptionArg {
   my ($oc,$x,$option,$available,$where)=@_;
@@ -443,11 +444,18 @@ sub mergeOptions {
     }
   }
 }
+sub finishIndex {               # close index group
+  my ($localoptions,$index)=@_;
+  my $indexcount='index'.$progContext->{'indexCount'};
+  return {} unless (scalar keys %$index > 0);
+  $localoptions->{'index'}->{$indexcount}=$index;
+  $progContext->{'indexCount'}++;
+  return {};
+}
 sub parseOptions {
   my ($optionContext,$desc,$options)=@_;
   my $localOptions={};
-  my $lastindex='.idx';
-  my $lastindexissuffix=1;
+  my $index={};
   my @option=@$options;
   &out(1,'init',"Treating $desc options");
   &out(2,'init',$options);
@@ -494,24 +502,37 @@ sub parseOptions {
       $localOptions->{'ignoreglobal'}=1;
     } elsif ($arg eq '--global') {
       $localOptions->{'ignoreglobal'}=0;
+    } elsif ($arg eq '--index-style') {
+      my $a=&checkOptionArg($index,$x++,$options,undef,'styleCandidate');
+      $index->{'style'}={$a=>1};
+      $index->{'styleIsSuffix'}=0;
+    } elsif ($arg eq '--index-style-suffix') {
+      my $a=&checkOptionArg($index,$x++,$options,undef,'styleCandidate');
+      $index->{'style'}={$a=>1};
+      $index->{'styleIsSuffix'}=1;
+    } elsif ($arg eq '--index-options') {
+      &checkOptionArg($index,$x++,$options,undef,'options');
     } elsif ($arg eq '--index-output') {
-      my $idx=&checkOptionArg(undef,$x++,$options);
-      &out(1,'err',"Overwriting property index-output for $lastindex/$lastindexissuffix") if defined($localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix});
-      $localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix}->{'0'}=$idx;
+      my $a=&checkOptionArg($index,$x++,$options,undef,'outputCandidate');
+      $index->{'output'}={$a=>1};
+      $index->{'outputIsSuffix'}=0;
     } elsif ($arg eq '--index-output-suffix') {
-      my $idx=&checkOptionArg(undef,$x++,$options);
-      &out(1,'err',"Overwriting property index-output for $lastindex/$lastindexissuffix") if defined($localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix});
-      $localOptions->{'indexOutput'}->{$lastindex}->{$lastindexissuffix}->{'1'}=$idx;
+      my $a=&checkOptionArg($index,$x++,$options,undef,'outputCandidate');
+      $index->{'output'}={$a=>1};
+      $index->{'outputIsSuffix'}=1;
     } elsif ($arg eq '--index-input') {
-      $lastindex=&checkOptionArg($localOptions,$x++,$options,undef,'indexFile');
-      $lastindexissuffix=0;
+      $index=&finishIndex($localOptions,$index);
+      &checkOptionArg($index,$x++,$options,undef,'input');
+      $index->{'inputIsSuffix'}=0;
     } elsif ($arg eq '--index-input-suffix') {
-      $lastindex=&checkOptionArg($localOptions,$x++,$options,undef,'indexFileSuffix');
-      $lastindexissuffix=1;
+      $index=&finishIndex($localOptions,$index);
+      &checkOptionArg($index,$x++,$options,undef,'input');
+      $index->{'inputIsSuffix'}=1;
     } elsif ($arg eq '--jobname-only') {
       &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
     } elsif ($arg eq '--jobname') {
       my $jobname=&checkOptionArg(undef,$x++,$options);
+      $index=&finishIndex($localOptions,$index);
       my $lo=$localOptions;
       $localOptions={};
       $localOptions->{'jobname'}->{$jobname}=1;
@@ -551,12 +572,14 @@ sub parseOptions {
       if ($arg eq '--file') {
         $arg=&checkOptionArg($optionContext,$x++,$options,undef,'includedFiles');
       }
+      $index=&finishIndex($localOptions,$index);
       $optionContext->{'includedFiles'}->{$arg}=1;
       $optionContext->{'sourceLocal'}->{$arg}=&clone($localOptions);
       $localOptions={};
     }
     $x++;
   }
+  $index=&finishIndex($localOptions,$index);
   if (scalar keys $localOptions > 0) {
     &out(2,'init',"Merging remaining local options");
     &mergeOptions($optionContext,$localOptions);
@@ -813,6 +836,8 @@ sub fingerprintArray {
   }
   return $hashing->hexdigest;
 }
+sub transformPath {
+}
 
 sub encodeGoalLine {
   join('',
@@ -952,13 +977,14 @@ sub processSourcefile {
 
 sub processJob {
   my ($jobname)=@_;
-  my $prePlan={'order' => [] };
-  my $runPlan={'order' => [] };
-  my $postPlan={'order' => [] };
+  my $plans={};
+  foreach my $plankey ('pre','run','post') {
+    $plans->{$plankey}={'order'=>[]};
+  }
   my $env=&clone($sourceContext);
-  if (defined($env->{'sourceLocal'})) {
-    my $lo=&clone($env->{'sourceLocal'});
-    delete($env->{'sourceLocal'});
+  if (defined($env->{'jobnameLocal'})) {
+    my $lo=&clone($env->{'jobnameLocal'});
+    delete($env->{'jobnameLocal'});
     if (defined($lo->{$_[0]})) {
       &mergeOptions($env,$lo->{$_[0]});
     }
@@ -970,59 +996,11 @@ sub processJob {
   # remove dirpart
   $env->{'stem'}=$jobname;
   # create metadatadir
-  my $p=$env->{'variant'};
-  if ($p eq 'pdflatex') {
-    $env->{'latexname'}='pdflatex';
-    $env->{'dviname'}='';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
-    $env->{'latexname'}='latex';
-    $env->{'dviname'}='dvips';
-    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
-    $env->{'outputFile'}=$env->{'stem'}.'.ps';
-  } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex') {
-    $env->{'latexname'}='latex';
-    $env->{'dviname'}='dvipdf';
-    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex') {
-    $env->{'latexname'}='latex';
-    $env->{'dviname'}='dvipdfm';
-    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'xelatex') {
-    $env->{'latexname'}='xelatex --no-pdf';
-    $env->{'dviname'}='xdvipdfmx';
-    $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'lualatex') {
-    $env->{'latexname'}='lualatex';
-    $env->{'dviname'}='';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } else {
-    # unknown chain
-    &finish(1,"Unknown latex chain: $p");
-  }
-  my $latex={
-             'in' => { $env->{'texsource'} => 1},
-             'callback' => 'latexCallback',
-             'command' => [split(/ /,$env->{'latexname'}),
-                           '--file-line-error',
-                           '--recorder',
-                           '--jobname',$jobname,
-                           $env->{'texsource'}
-                          ],
-            };
-  if (defined $env->{'inputDviFile'}) {
-    $latex->{'out'}={$env->{'inputDviFile'}=>1};
-  } else {
-    $latex->{'out'}={$env->{'outputFile'}=>1};
-  }
-  $runPlan->{'latex'}=$latex;
-  push $runPlan->{'order'},'latex';
-  foreach my $sequencePlan ($prePlan,$runPlan,$postPlan) {
-    foreach my $elem (@{$sequencePlan->{'order'}}) {
-      &loadPlanPart($env,$sequencePlan,$elem);
+  &buildLatex($env,$plans);
+  &buildIndices($env,$plans);
+  foreach my $plankey ('pre','run','post') {
+    foreach my $elem (@{$plans->{$plankey}->{'order'}}) {
+      &loadPlanPart($env,$plans->{$plankey},$elem);
     }
   }
   if (defined($env->{'actions'}->{'build'})) {
@@ -1031,9 +1009,12 @@ sub processJob {
     $class.=" as $jobname" if $jobname ne $env->{'defaultjobname'};
     &out(1,'display',$class);
     my $counter=0;
-    while (!$done) {
-      $counter++;
-      $done=&runPlanParts($env,$runPlan,"cycle $counter");
+    foreach my $plankey ('pre','run','post') {
+      $done=0;
+      while (!$done) {
+        $counter++;
+        $done=&runPlanParts($env,$plans->{$plankey},"cycle $counter");
+      }
     }
     &out(3,'display',"done");
   }
@@ -1043,10 +1024,10 @@ sub processJob {
       defined($env->{'actions'}->{'junk'})
      ) {
     my $array={'in'=>{},'out'=>{},'junk'=>{}};
-    foreach my $sequencePlan ($prePlan,$runPlan,$postPlan) {
-      foreach my $elem (@{$sequencePlan->{'order'}}) {
+    foreach my $plankey ('pre','run','post') {
+      foreach my $elem (@{$plans->{$plankey}->{'order'}}) {
         foreach my $i ('in','out','junk') {
-          &addHashInPlace($array->{$i},$sequencePlan->{$elem}->{$i});
+          &addHashInPlace($array->{$i},$plans->{$plankey}->{$elem}->{$i});
         }
       }
     }
@@ -1093,6 +1074,145 @@ sub runPlanParts {
   return $alldone;
 }
 
+sub buildLatex {
+  my ($env,$plans)=@_;
+  my $runPlan=$plans->{'run'};
+  my $p=$env->{'variant'};
+  if ($p eq 'pdflatex') {
+    $env->{'latexname'}='pdflatex';
+    $env->{'dviname'}='';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvips';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.ps';
+  } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvipdf';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex') {
+    $env->{'latexname'}='latex';
+    $env->{'dviname'}='dvipdfm';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'xelatex') {
+    $env->{'latexname'}='xelatex --no-pdf';
+    $env->{'dviname'}='xdvipdfmx';
+    $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'lualatex') {
+    $env->{'latexname'}='lualatex';
+    $env->{'dviname'}='';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } else {
+    # unknown chain
+    &finish(1,"Unknown latex chain: $p");
+  }
+  my $latex={
+             'in' => { $env->{'texsource'} => 1},
+             'callback' => 'latexCallback',
+             'command' => [split(/ /,$env->{'latexname'}),
+                           '--file-line-error',
+                           '--recorder',
+                           '--jobname',$env->{'stem'},
+                           $env->{'texsource'}
+                          ],
+            };
+  if (defined $env->{'inputDviFile'}) {
+    $latex->{'out'}={$env->{'inputDviFile'}=>1};
+  } else {
+    $latex->{'out'}={$env->{'outputFile'}=>1};
+  }
+  $runPlan->{'latex'}=$latex;
+  push $runPlan->{'order'},'latex';
+}
+sub buildIndices {
+  my ($env,$plans)=@_;
+  my $runPlan=$plans->{'run'};
+  foreach my $key (keys %{$env->{'index'}}) {
+    &buildIndex($env,$runPlan,$env->{'index'}->{$key});
+  }
+}
+sub buildIndex {
+  my ($env,$runPlan,$index)=@_;
+  my $style=0;
+  my ($in,$out,$sty,$log);
+  if (!defined($index->{'output'})) {
+    $index->{'output'}={'.ind'=>1};
+    $index->{'outputIsSuffix'}=1;
+  }
+  if (!defined($index->{'input'})) {
+    $index->{'input'}={'.idx'=>1};
+    $index->{'inputIsSuffix'}=1;
+  }
+  if (!defined($index->{'log'})) {
+    $index->{'log'}={'.ilg'=>1};
+    $index->{'logIsSuffix'}=1;
+  }
+  if (defined($index->{'style'})) {
+    $style=1;
+  } else {
+    $index->{'style'}={'.mst'=>1};
+    $index->{'styleIsSuffix'}=1;
+  }
+  if ($index->{'inputIsSuffix'}) {
+    $in=$env->{'stem'}.(keys $index->{'input'})[0];
+  } else {
+    $in=&decodeGoalLine((keys $index->{'input'})[0]);
+  }
+  if ($index->{'logIsSuffix'}) {
+    $log=$env->{'stem'}.(keys $index->{'log'})[0];
+  } else {
+    $log=&decodeGoalLine((keys $index->{'log'})[0]);
+  }
+  if ($index->{'outputIsSuffix'}) {
+    $out=$env->{'stem'}.(keys $index->{'output'})[0];
+  } else {
+    $out=&decodeGoalLine((keys $index->{'output'})[0]);
+  }
+  if ($index->{'styleIsSuffix'}) {
+    $sty=$env->{'stem'}.(keys $index->{'style'})[0];
+  } else {
+    $sty=&decodeGoalLine((keys $index->{'style'})[0]);
+  }
+  my $action={
+              'in' => { $in=>1,$sty=>1 },
+              'out' => { $out=>1,$log=>1 },
+              'junk' => {},
+              'callback' => 'indexCallback',
+              'style' => $style,
+              'styleFile'=> $sty,
+              'sourceFile'=> $in,
+              'command' => ['makeindex','-o',$out],
+              'cmdname' => 'makeindex '.(keys $index->{'input'})[0].'=>'.(keys $index->{'output'})[0],
+             };
+  push $action->{'command'},'-s',$sty if ($style);
+  push $action->{'command'},$in;
+  my $key="makeindex $out";
+  $runPlan->{$key}=$action;
+  push $runPlan->{'order'},$key;
+}
+
+sub indexCallback {
+  my ($env,$plan,$part,$subclass)=@_;
+  &out(2,'display',$subclass) if defined($subclass);
+  &out(3,'display',$part->{'cmdname'});
+  if ($part->{'style'} and ! -f $part->{'styleFile'}) {
+    &finish(1,"Mandatory style file for makeindex $part->{'styleFile'} not found");
+  }
+  my @command=@{$part->{'command'}};
+  if ($env->{'filter'}) {
+    splice @command,-1,0,'-q';
+  }
+  my $status=&execCommand(@command);
+  if ($status) {
+    &finish(1,$env->{'cmdname'}." failed with status $status");
+  }
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out');
+  return 0;
+}
 sub latexCallback {
   my ($env,$plan,$part,$subclass)=@_;
   &out(2,'display',$subclass) if defined($subclass);
@@ -1102,6 +1222,7 @@ sub latexCallback {
   if ($status) {
     &finish(1,"TeX failed with status $status");
   }
+  # Reevaluate inputs and outputs
   my ($out,$in,$junk,$pwd)=({},{},{},undef);
   open FILE,$env->{'stem'}.".fls" or die 'Input/output list was not generated!';
   my $line;
