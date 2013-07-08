@@ -991,6 +991,12 @@ sub processJob {
   }
   &out(3,'init','At the end of the job selection');
   &out(3,'init',$env);
+  if (scalar keys $env->{'jobnameOnly'}) {
+    if (!defined($env->{'jobnameOnly'}->{$jobname})) {
+      &out(1,'init',"Skipping $jobname");
+      return;
+    }
+  }
   $env->{'meta'}=File::Spec->catdir($env->{'metadir'},$jobname);
   make_path($env->{'meta'});
   # remove dirpart
