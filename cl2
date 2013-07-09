@@ -94,10 +94,17 @@ sub main {
   foreach my $sourcefile (sort keys %{$optionContext->{'includedFiles'}}) {
     &processSourcefile($sourcefile);
   }
-  foreach my $i ('in','out','junk') {
+  foreach my $i ('in','out','junk','ignore') {
     if (defined($optionContext->{'actions'}->{$i})) {
       foreach my $key (keys %{$progContext->{$i}}) {
         &out(1,'result',&encodeGoalLine($key));
+      }
+    }
+  }
+  foreach my $i ('cli') {
+    if (defined($optionContext->{'actions'}->{$i})) {
+      foreach my $key (keys %{$progContext->{$i}}) {
+        &out(1,'result',$key.";".$progContext->{$i}->{$key});
       }
     }
   }
@@ -389,8 +396,10 @@ sub initOptions {
                                         'in' => 1,
                                         'out' => 1,
                                         'junk' => 1,
+                                        'ignore' => 1,
                                         'clean' => 1,
                                         'build' => 1,
+                                        'cli' => 1,
                                        };
   $optionContext->{'availableVariants'}={
                                          'pdflatex' => 1,
@@ -528,6 +537,14 @@ sub parseOptions {
       $index=&finishIndex($localOptions,$index);
       &checkOptionArg($index,$x++,$options,undef,'input');
       $index->{'inputIsSuffix'}=1;
+    } elsif ($arg eq '--assume-ignore') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'assume-ignore');
+    } elsif ($arg eq '--assume-in') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'assume-in');
+    } elsif ($arg eq '--assume-junk') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'assume-junk');
+    } elsif ($arg eq '--assume-out') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'assume-out');
     } elsif ($arg eq '--jobname-only') {
       &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
     } elsif ($arg eq '--jobname') {
@@ -841,7 +858,7 @@ sub transformPath {
 
 sub encodeGoalLine {
   join('',
-       map { ($_ > 127 || $_ < 32 || $_ == 37 || $_ == 57 )?
+       map { ($_ > 127 || $_ < 32 || $_ == 37 || $_ == 59 || $_ == 58 )?
                sprintf("%%(%d)", $_) :
                  chr($_)
                } unpack("W*", &decode_utf8($_[0]))); # unpack Unicode characters
@@ -928,6 +945,7 @@ sub processSourcefile {
   close FILE;
   $sourceContext->{'nofiles'}=1;
   $sourceContext->{'texsource'}=$filename;
+  $sourceContext->{'fulltexsource'}=$filename;
   if (defined($sourceContext->{'sourceLocal'})) {
     my $lo=&clone($sourceContext->{'sourceLocal'});
     delete($sourceContext->{'sourceLocal'});
@@ -991,7 +1009,7 @@ sub processJob {
   }
   &out(3,'init','At the end of the job selection');
   &out(3,'init',$env);
-  if (scalar keys $env->{'jobnameOnly'}) {
+  if (scalar keys %{$env->{'jobnameOnly'}}) {
     if (!defined($env->{'jobnameOnly'}->{$jobname})) {
       &out(1,'init',"Skipping $jobname");
       return;
@@ -1014,12 +1032,11 @@ sub processJob {
     my $class='Processing '.$env->{'texsource'};
     $class.=" as $jobname" if $jobname ne $env->{'defaultjobname'};
     &out(1,'display',$class);
-    my $counter=0;
+    my $counter=1;
     foreach my $plankey ('pre','run','post') {
       $done=0;
       while (!$done) {
-        $counter++;
-        $done=&runPlanParts($env,$plans->{$plankey},"cycle $counter");
+        ($done,$counter)=&runPlanParts($env,$plans->{$plankey},"cycle $counter",$counter);
       }
     }
     &out(3,'display',"done");
@@ -1046,12 +1063,25 @@ sub processJob {
       }
     }
   }
+  if (defined($env->{'actions'}->{'cli'})) {
+    my @args=('PROGNAME');
+    foreach my $from ('in','junk','out','ignore') {
+      foreach my $key (sort keys %{$plans->{'run'}->{'latex'}->{$from}}) {
+        push @args,"--assume-$from",&encodeGoalLine($key) if ($from ne 'in' or $key ne $env->{'texsource'}) and ($from ne 'out' or $key ne $env->{'outputLatex'});
+      }
+    }
+    push @args,'--jobname',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
+    push @args,'--jobname-only',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
+    push @args,$env->{'fulltexsource'};
+    $progContext->{'cli'}->{&encodeGoalLine($env->{'fulltexsource'}).';'.$jobname.';'.&encodeGoalLine($jobname)}=join(' ',@args);
+  }
 }
 
 sub runPlanParts {
-  my ($env,$plan,$subclass)=@_;
+  my ($env,$plan,$subclass,$counter)=@_;
   my $alldone=1;
   my $order=$plan->{'order'};
+  $counter++ if scalar @$order;
   foreach my $elem (@$order) {
     my $part=$plan->{$elem};
     my $fingerprintIn=&fingerprintArray($part,'in');
@@ -1059,7 +1089,7 @@ sub runPlanParts {
     my $fingerprintJunk=&fingerprintArray($part,'junk');
     my $fp="$fingerprintIn $fingerprintOut $fingerprintJunk";
     my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintJunk'});
-    if ($oldfp eq $fp) { 
+    if ($oldfp eq $fp) {
       &out(1,'plan',"Skipping $elem");
       next;
     } else {
@@ -1077,7 +1107,7 @@ sub runPlanParts {
     $alldone=0 unless $return;
     $subclass=undef unless $alldone;
   }
-  return $alldone;
+  return ($alldone,$counter);
 }
 
 sub buildLatex {
@@ -1128,8 +1158,25 @@ sub buildLatex {
             };
   if (defined $env->{'inputDviFile'}) {
     $latex->{'out'}={$env->{'inputDviFile'}=>1};
+    $env->{'outputLatex'}=$env->{'inputDviFile'};
   } else {
     $latex->{'out'}={$env->{'outputFile'}=>1};
+    $env->{'outputLatex'}=$env->{'outputFile'};
+  }
+  $latex->{'ignore'}->{$env->{'stem'}.".log"}=1;
+  $latex->{'ignore'}->{$env->{'stem'}.".fls"}=1;
+  foreach my $from ('in','out','junk','ignore') {
+    if (defined $env->{"assume-$from"}) {
+      my $fromH=$env->{"assume-$from"};
+      foreach my $key (keys %$fromH) {
+        $latex->{$from}->{$key}=1;
+      }
+    }
+  }
+  foreach my $key (keys %{$latex->{'ignore'}}) {
+    foreach my $xx ('in','out','junk') {
+      delete $latex->{$xx}->{$key} if exists $latex->{$xx}->{$key};
+    }
   }
   $runPlan->{'latex'}=$latex;
   push $runPlan->{'order'},'latex';
@@ -1256,6 +1303,11 @@ sub latexCallback {
   $out->{$env->{'stem'}.".fls"}=1;
   my $arrays={'in'=>$in,'out'=>$out,'junk'=>$junk,'pwd'=>$pwd,'home'=>$pwd};
   &collapseArrays($arrays);
+  foreach my $key (keys %{$part->{'ignore'}}) {
+    foreach my $x ($in,$out,$junk) {
+      delete $x->{$key} if exists $x->{$key};
+    }
+  }
   $part->{'in'}=$in;
   $part->{'out'}=$out;
   $part->{'junk'}=$junk;
@@ -1306,3 +1358,15 @@ sub loadPlanPart {
     }
   }
 }
+
+# TODO
+# shorthands for options
+# shorthands for certain options
+# autodoc
+# retrofix fingerprintIn if one input was added/deleted, and we have a working cache of it?
+# bibtex management
+# .aux => .auxbib management
+
+# About .auxbib
+# Filter out .aux => $metadir/auxbib
+# if cmdline of bibtex is bibtex $env->{'stem'}.".aux", then modify it as bibtex File::Spec->catfile($env->{'meta'},"auxbib");
