@@ -15,9 +15,9 @@ compile-latex - compile files until reaching a fixed point
 Actions are things that C<compile-latex> does if asked.  If no action is
 specified, then B<--build> is used instead.
 
-plan B<[--]in>|B<[--]out>|B<[--]junk>|B<[--]build>|B<[--]clean> I<goals>
+compile-latex B<[--]in>|B<[--]out>|B<[--]junk>|B<[--]build>|B<[--]clean> I<goals>
 
-plan B<--help>|B<--man>|B<--nroff>|B<--usage>
+compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
 
 =cut
 
@@ -36,7 +36,7 @@ use POSIX qw(:sys_wait_h dup dup2);use IO::Select;use IO::Handle;
 
 my ($sourceContext,$optionContext,$execContext,$outContext,$progContext);
 
-$progContext={'tmpfiles' => {}, 'in'=> {}, 'out' => {} , 'junk' => {}};
+$progContext={'tmpfiles' => {}, 'in'=> {}, 'out' => {} , 'junk' => {}, 'ignore' => {}};
 
 # Convenience
 
@@ -96,7 +96,7 @@ sub main {
   }
   foreach my $i ('in','out','junk','ignore') {
     if (defined($optionContext->{'actions'}->{$i})) {
-      foreach my $key (keys %{$progContext->{$i}}) {
+      foreach my $key (sort keys %{$progContext->{$i}}) {
         &out(1,'result',&encodeGoalLine($key));
       }
     }
@@ -423,11 +423,13 @@ sub initOptions {
        'help' => [ '--help-action', 'man' ],
        '--man' => [ '--help-action', 'man' ],
        '--nroff' => [ '--help-action', 'nroff' ],
+       '--index' => [  '--index-input-suffix', '.idx' , '--index-output-suffix', '.ind' ],
       };
   $optionContext->{'targets'}={};
   $optionContext->{'variant'}='pdflatex';
   $optionContext->{'chdir'}=1;
   $optionContext->{'filter'}=0;
+  $optionContext->{'manual'}=0;
   $optionContext->{'ignoreglobal'}=1;
   $progContext->{'indexCount'}=0;
 }
@@ -507,10 +509,21 @@ sub parseOptions {
       $localOptions->{'filter'}=0;
     } elsif ($arg eq '--filter') {
       $localOptions->{'filter'}=1;
+    } elsif ($arg eq '--manual') {
+      $localOptions->{'manual'}=1;
     } elsif ($arg eq '--no-global') {
       $localOptions->{'ignoreglobal'}=1;
     } elsif ($arg eq '--global') {
       $localOptions->{'ignoreglobal'}=0;
+    } elsif ($arg eq '--bibtex-file') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'bibfile');
+    } elsif ($arg eq '--bibtex-file-suffix') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'bibfileSuffix');
+    } elsif ($arg eq '--bibtex') {
+      $localOptions->{'bibfileSuffix'}->{'.aux'}=1;
+    } elsif ($arg eq '--bibtex-program') {
+      my $a=&checkOptionArg(undef,$x++,$options);
+      $localOptions->{'bibtexname'}=$a;
     } elsif ($arg eq '--index-style') {
       my $a=&checkOptionArg($index,$x++,$options,undef,'styleCandidate');
       $index->{'style'}={$a=>1};
@@ -783,6 +796,9 @@ sub executeCommand {
   &out(1,'exec',join(' ',@_));
   my $outputtext='';
   my $errtext='';
+  my $handler=undef;
+  $handler=$SIG{CHLD} if defined($SIG{CHLD});
+  $SIG{CHLD} = sub {} ;
   my $pid=open3(\*INPUT, \*OUTPUT, \*ERR,@_);
   print INPUT $in if $in;
   close(INPUT);
@@ -796,6 +812,7 @@ sub executeCommand {
     }
     $done=waitpid($pid,WNOHANG);
   } until ($done>0);
+  $SIG{CHLD}=$handler if $handler;
   return [ $?, $outputtext, $errtext ];
 }
 
@@ -842,18 +859,20 @@ sub fingerprintArray {
   my $key=shift @_;
   my @a=sort keys %{$context->{$key}};
   return 'none' unless (scalar @a);
+  my $hash='';
   my $hashing = Digest::MD5->new;
   my $fp;
   foreach my $file (@a) {
     $fp=&fingerprint($file);
     $hashing->add($file.$fp);
+    $hash.=$file.':'.$fp;
   }
   foreach my $supp (@_) {
     $hashing->add(join('|',@$supp));
+    $hash.=join('|',@$supp);
   }
+  return $hash;
   return $hashing->hexdigest;
-}
-sub transformPath {
 }
 
 sub encodeGoalLine {
@@ -1015,6 +1034,7 @@ sub processJob {
       return;
     }
   }
+  &parseOptions($env,'non-manual',['--index']) unless ($env->{'manual'});
   $env->{'meta'}=File::Spec->catdir($env->{'metadir'},$jobname);
   make_path($env->{'meta'});
   # remove dirpart
@@ -1022,6 +1042,7 @@ sub processJob {
   # create metadatadir
   &buildLatex($env,$plans);
   &buildIndices($env,$plans);
+  &buildBibs($env,$plans);
   foreach my $plankey ('pre','run','post') {
     foreach my $elem (@{$plans->{$plankey}->{'order'}}) {
       &loadPlanPart($env,$plans->{$plankey},$elem);
@@ -1044,12 +1065,13 @@ sub processJob {
   if (
       defined($env->{'actions'}->{'out'}) or
       defined($env->{'actions'}->{'in'}) or
-      defined($env->{'actions'}->{'junk'})
+      defined($env->{'actions'}->{'junk'}) or
+      defined($env->{'actions'}->{'ignore'})
      ) {
-    my $array={'in'=>{},'out'=>{},'junk'=>{}};
+    my $array={'in'=>{},'out'=>{},'junk'=>{},'ignore'=>{}};
     foreach my $plankey ('pre','run','post') {
       foreach my $elem (@{$plans->{$plankey}->{'order'}}) {
-        foreach my $i ('in','out','junk') {
+        foreach my $i ('in','out','junk','ignore') {
           &addHashInPlace($array->{$i},$plans->{$plankey}->{$elem}->{$i});
         }
       }
@@ -1057,7 +1079,7 @@ sub processJob {
     $array->{'home'}=$env->{'home'};
     $array->{'pwd'}=$env->{'pwd'};
     &collapseArrays($array);
-    foreach my $i ('in','out','junk') {
+    foreach my $i ('in','out','junk','ignore') {
       if (defined($env->{'actions'}->{$i})) {
         &addHashInPlace($progContext->{$i},$array->{$i});
       }
@@ -1084,19 +1106,21 @@ sub runPlanParts {
   $counter++ if scalar @$order;
   foreach my $elem (@$order) {
     my $part=$plan->{$elem};
-    my $fingerprintIn=&fingerprintArray($part,'in');
-    my $fingerprintOut=&fingerprintArray($part,'out');
-    my $fingerprintJunk=&fingerprintArray($part,'junk');
-    my $fp="$fingerprintIn $fingerprintOut $fingerprintJunk";
-    my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintJunk'});
-    if ($oldfp eq $fp) {
-      &out(1,'plan',"Skipping $elem");
-      next;
-    } else {
-      &out(2,'plan',"Not skipping $elem because\n$fp is not\n$oldfp");
+    if (!exists($part->{'always'})) {
+      my $fingerprintIn=&fingerprintArray($part,'in');
+      my $fingerprintOut=&fingerprintArray($part,'out');
+      my $fingerprintJunk=&fingerprintArray($part,'junk');
+      my $fp="$fingerprintIn $fingerprintOut $fingerprintJunk";
+      my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintJunk'});
+      if ($oldfp eq $fp) {
+        &out(1,'plan',"Skipping $elem");
+        next;
+      } else {
+        &out(2,'plan',"Not skipping $elem because\n$fp is not\n$oldfp");
+      }
+      $part->{'fingerprintIn'}=$fingerprintIn;
+      $part->{'fingerprintJunk'}=$fingerprintJunk;
     }
-    $part->{'fingerprintIn'}=$fingerprintIn;
-    $part->{'fingerprintJunk'}=$fingerprintJunk;
     &out(1,'plan',"Trying $elem");
     my $return; # 1 should be returned if nothing was done, 0 if something was done
     {
@@ -1194,7 +1218,8 @@ sub buildIndex {
   my ($in,$out,$sty,$log);
   if (!defined($index->{'output'})) {
     $index->{'output'}={'.ind'=>1};
-    $index->{'outputIsSuffix'}=1;
+    $index->{'outputIsSuffix
+'}=1;
   }
   if (!defined($index->{'input'})) {
     $index->{'input'}={'.idx'=>1};
@@ -1232,7 +1257,8 @@ sub buildIndex {
   }
   my $action={
               'in' => { $in=>1,$sty=>1 },
-              'out' => { $out=>1,$log=>1 },
+              'out' => { $out=>1 },
+              'ignore' => {$log => 1},
               'junk' => {},
               'callback' => 'indexCallback',
               'style' => $style,
@@ -1247,9 +1273,149 @@ sub buildIndex {
   $runPlan->{$key}=$action;
   push $runPlan->{'order'},$key;
 }
-
+sub buildBibs {
+  my ($env,$plans)=@_;
+  my $runPlan=$plans->{'run'};
+  if ($env->{'manual'} != 1) {
+    push $runPlan->{'order'},'autoBib';
+    $runPlan->{'autoBib'}={
+                           'command'=> ['autoBib'],
+                           'always' => 1,
+                           'callback' => 'autoBibCallback'
+                          };
+  }
+  push $runPlan->{'order'},'updateBibs';
+  $runPlan->{'updateBibs'}={
+                            'command'=> ['updateBibs'],
+                            'always' => 1,
+                            'callback' => 'updateBibsCallback'
+                           };
+  foreach my $key (keys %{$env->{'bibfile'}}) {
+    &buildBib($env,$runPlan,$key);
+  }
+  foreach my $key (keys %{$env->{'bibfileSuffix'}}) {
+    &buildBib($env,$runPlan,$env->{'stem'}.$key);
+  }
+}
+sub buildBib {
+  my ($env,$runPlan,$bib)=@_;
+  my $stem=$bib;
+  $stem=~s/\.aux$//g;
+  $bib="$stem.aux";
+  my $key='bib'.$bib;
+  my $fakebib=$bib;
+  if ($stem eq $env->{'stem'}) {
+    $fakebib=File::Spec->catfile($env->{'meta'},"auxbib");
+  }
+  my $bibpart={
+               'in' => {$fakebib => 1},
+               'out'=> {"$stem.bbl"=>1},
+               'ignore' => {"$stem.blg"=>1},
+               'junk' => {},
+               'callback' => 'bibCallback',
+              };
+  $env->{'bibtexname'}="bibtex" unless (exists $env->{'bibtexname'});
+  my $command=[map {&decodeGoalLine($_)} split(/ /,$env->{'bibtexname'})];
+  push $command,'-terse' if ($env->{'filter'});
+  push $command,$stem;
+  $bibpart->{'command'}=$command;
+  $bibpart->{'cmdname'}="bibtex $stem";
+  if (-f $bib) {
+    my $copy=0;
+    if ($fakebib ne $bib) {
+      $copy=1;
+      open FINGERFILE,'>',$fakebib;
+    }
+    if (!open FILE,$bib) {
+      &out(1,'err',"Could not open $bib for reading");
+      goto skip;
+    }
+    my $bibdata={};
+    my $bibstyle=undef;
+    while (<FILE>) {
+      if ($copy and /^\\([a-z]+)/) {
+        print FINGERFILE $_ if ($1 eq 'bibdata' or $1 eq 'citation' or $1 eq 'bibstyle');
+      }
+      if (/^\\bibstyle{(.*)}$/) {
+        my $bibdataf=$1;
+        $bibdataf=~s/\.bst$//g;
+        $bibstyle=$bibdataf;
+      } elsif (/^\\bibdata{(.*)}$/) {
+        my $bibdataf=$1;
+        $bibdataf=~s/\.bib$//g;
+        $bibdata->{$bibdataf}=1;
+      }
+    }
+    close FINGERFILE if ($copy);
+    goto skip unless defined($bibstyle);
+    goto skip unless scalar keys %$bibdata;
+    my $bibstylef=&kpsewhich('bibtex',$bibstyle.'.bst');
+    $bibpart->{'in'}->{$bibstylef}=1 if defined $bibstylef;
+    foreach my $bkey (keys %$bibdata) {
+      my $bibdataf=&kpsewhich('bibtex',$bkey.'.bib');
+      $bibpart->{'in'}->{$bibdataf}=1 if $bibdataf;
+    }
+    $bibpart->{'home'}=$bibpart->{'pwd'}=getcwd();
+    &collapseArrays($bibpart);
+  }
+ skip:
+  push $runPlan->{'order'},$key unless exists $runPlan->{$key};
+  $runPlan->{$key}=$bibpart;
+  $runPlan->{'updateBibs'}->{'allbibs'}->{$bib}=1;
+  &loadPlanPart($env,$runPlan,$key);
+}
+sub kpsewhich {
+  my ($progname,$file)=@_;
+  my ($a,$out,$b)=@{&executeCommand('','kpsewhich','-progname',$progname,$file)};
+  chomp $out;
+  return $out if ($a == 0);
+  return undef;
+}
+sub updateBibsCallback {
+  my ($env,$plan,$part,$subclass)=@_;
+  foreach my $key (keys %{$part->{'allbibs'}}) {
+    &buildBib($env,$plan,$key,1);
+  }
+  return 1;
+}
+sub autoBibCallback {
+  my ($env,$plan,$part,$subclass)=@_;
+  my @outlatexfiles=(keys %{$plan->{'latex'}->{'out'}},keys %{$plan->{'latex'}->{'junk'}});
+  my $bibfiles={};
+  foreach my $file (@outlatexfiles) {
+    open FILE,$file or next;
+    my $status=0;
+    while (<FILE>) {
+      if (/^\\bibstyle/ or /^\\bibcite/ or /^\\bibdata/ or /^\\citation/) {
+        $status=$status|2;
+      } else {
+        $status=$status|1;
+      }
+    }
+    close FILE;
+    $bibfiles->{$file}=1 if $status == 2;
+    $bibfiles->{$file}=1 if $file eq $env->{'stem'}.'.aux' and $status == 3;
+  }
+  foreach my $key (keys %$bibfiles) {
+    $plan->{'updateBibs'}->{'allbibs'}->{$key}=1;
+  }
+  return 1;
+}
+sub bibCallback {
+  my ($env,$plan,$part,$subclass)=@_;
+  &out(2,'display',$subclass) if defined($subclass);
+  &out(3,'display',$part->{'cmdname'});
+  my @command=@{$part->{'command'}};
+  my $status=&execCommand(@command);
+  if ($status) {
+    &finish(1,$env->{'cmdname'}." failed with status $status");
+  }
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out');
+  return 0;
+}
 sub indexCallback {
   my ($env,$plan,$part,$subclass)=@_;
+  return 1 unless -f ($part->{'sourceFile'});
   &out(2,'display',$subclass) if defined($subclass);
   &out(3,'display',$part->{'cmdname'});
   if ($part->{'style'} and ! -f $part->{'styleFile'}) {
