@@ -1092,6 +1092,20 @@ sub processJob {
         push @args,"--assume-$from",&encodeGoalLine($key) if ($from ne 'in' or $key ne $env->{'texsource'}) and ($from ne 'out' or $key ne $env->{'outputLatex'});
       }
     }
+    if ($env->{'manual'}) {
+      my $any=1;
+      my $stem=$env->{'stem'};
+      foreach my $key (keys %{$plans->{'run'}->{'updateBibs'}->{'allbibs'}}) {
+        if ($any) {$any=0;push @args,'--manual';};
+        if ($key eq "$stem.aux") {
+          push @args,'--bibtex';
+        } elsif ($key=~/^$stem(.*)$/) {
+          push @args,'--bibtex-file-suffix',&encodeGoalLine($1);
+        } else {
+          push @args,'--bibtex-file',&encodeGoalLine($key);
+        }
+      }
+    }
     push @args,'--jobname',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
     push @args,'--jobname-only',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
     push @args,$env->{'fulltexsource'};
@@ -1288,7 +1302,8 @@ sub buildBibs {
   $runPlan->{'updateBibs'}={
                             'command'=> ['updateBibs'],
                             'always' => 1,
-                            'callback' => 'updateBibsCallback'
+                            'callback' => 'updateBibsCallback',
+                            'allbibs' => {},
                            };
   foreach my $key (keys %{$env->{'bibfile'}}) {
     &buildBib($env,$runPlan,$key);
