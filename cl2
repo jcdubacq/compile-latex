@@ -425,6 +425,9 @@ sub initOptions {
        '--nroff' => [ '--help-action', 'nroff' ],
        '--index' => [  '--index-input-suffix', '.idx' , '--index-output-suffix', '.ind' ],
       };
+  $optionContext->{'optionAliases'}={
+                                     '--index-file-suffix' => '--index-input-suffix',
+                                    };
   $optionContext->{'targets'}={};
   $optionContext->{'variant'}='pdflatex';
   $optionContext->{'chdir'}=1;
@@ -473,6 +476,9 @@ sub parseOptions {
   my $x=0;
   while ($x < scalar @option) {
     my $arg=$option[$x];
+    if (defined($optionContext->{'optionAliases'}->{$arg})) {
+      $arg=$optionContext->{'optionAliases'}->{$arg};
+    }
     if (defined($optionContext->{'nofiles'}) and defined($optionContext->{'initialOptions'}->{$arg}) ) {
       &finish(1,"Wrong option: $arg is not allowed in $desc");
     }
@@ -534,6 +540,14 @@ sub parseOptions {
       $index->{'styleIsSuffix'}=1;
     } elsif ($arg eq '--index-options') {
       &checkOptionArg($index,$x++,$options,undef,'options');
+    } elsif ($arg eq '--index-log') {
+      my $a=&checkOptionArg($index,$x++,$options,undef,'logCandidate');
+      $index->{'log'}={$a=>1};
+      $index->{'logIsSuffix'}=0;
+    } elsif ($arg eq '--index-log-suffix') {
+      my $a=&checkOptionArg($index,$x++,$options,undef,'logCandidate');
+      $index->{'log'}={$a=>1};
+      $index->{'logIsSuffix'}=1;
     } elsif ($arg eq '--index-output') {
       my $a=&checkOptionArg($index,$x++,$options,undef,'outputCandidate');
       $index->{'output'}={$a=>1};
@@ -1106,6 +1120,11 @@ sub processJob {
         }
       }
     }
+    foreach my $key (keys %{$plans->{'run'}->{'allIndexes'}}) {
+      my @indexargs=@{$plans->{'run'}->{$key}->{'cli'}};
+      push @args,@indexargs if scalar @indexargs>1;
+      push @args,@indexargs if scalar @indexargs == 1 and $env->{'manual'};
+    }
     push @args,'--jobname',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
     push @args,'--jobname-only',&encodeGoalLine($jobname) if ($jobname ne $env->{'defaultjobname'});
     push @args,$env->{'fulltexsource'};
@@ -1230,14 +1249,14 @@ sub buildIndex {
   my ($env,$runPlan,$index)=@_;
   my $style=0;
   my ($in,$out,$sty,$log);
-  if (!defined($index->{'output'})) {
-    $index->{'output'}={'.ind'=>1};
-    $index->{'outputIsSuffix
-'}=1;
-  }
+  my @args=();
   if (!defined($index->{'input'})) {
     $index->{'input'}={'.idx'=>1};
     $index->{'inputIsSuffix'}=1;
+  }
+  if (!defined($index->{'output'})) {
+    $index->{'output'}={'.ind'=>1};
+    $index->{'outputIsSuffix'}=1;
   }
   if (!defined($index->{'log'})) {
     $index->{'log'}={'.ilg'=>1};
@@ -1250,24 +1269,43 @@ sub buildIndex {
     $index->{'styleIsSuffix'}=1;
   }
   if ($index->{'inputIsSuffix'}) {
-    $in=$env->{'stem'}.(keys $index->{'input'})[0];
+    my $key=(keys $index->{'input'})[0];
+    $in=$env->{'stem'}.$key;
+    push @args,'--index-input-suffix',$key;
   } else {
-    $in=&decodeGoalLine((keys $index->{'input'})[0]);
+    my $key=(keys $index->{'input'})[0];
+    $in=&decodeGoalLine($key);
+    push @args,'--index-input',$key;
   }
   if ($index->{'logIsSuffix'}) {
-    $log=$env->{'stem'}.(keys $index->{'log'})[0];
+    my $key=(keys $index->{'log'})[0];
+    $log=$env->{'stem'}.$key;
+    push @args,'--index-log-suffix',$key unless $key eq '.ilg';
   } else {
-    $log=&decodeGoalLine((keys $index->{'log'})[0]);
+    my $key=(keys $index->{'log'})[0];
+    $log=&decodeGoalLine($key);
+    push @args,'--index-log',$key;
   }
   if ($index->{'outputIsSuffix'}) {
-    $out=$env->{'stem'}.(keys $index->{'output'})[0];
+    my $key=(keys $index->{'output'})[0];
+    $out=$env->{'stem'}.$key;
+    push @args,'--index-output-suffix',$key unless $key eq '.ind';
   } else {
-    $out=&decodeGoalLine((keys $index->{'output'})[0]);
+    my $key=(keys $index->{'output'})[0];
+    $out=&decodeGoalLine($key);
+    push @args,'--index-output',$key;
   }
   if ($index->{'styleIsSuffix'}) {
-    $sty=$env->{'stem'}.(keys $index->{'style'})[0];
+    my $key=(keys $index->{'style'})[0];
+    $sty=$env->{'stem'}.$key;
+    push @args,'--index-style-suffix',$key unless $key eq '.mst';
   } else {
-    $sty=&decodeGoalLine((keys $index->{'style'})[0]);
+    my $key=(keys $index->{'style'})[0];
+    $sty=&decodeGoalLine($key);
+    push @args,'--index-style',$key;
+  }
+  if (join(' ',@args) eq '--index-input-suffix .idx') {
+    @args=('--index');
   }
   my $action={
               'in' => { $in=>1,$sty=>1 },
@@ -1280,12 +1318,14 @@ sub buildIndex {
               'sourceFile'=> $in,
               'command' => ['makeindex','-o',$out],
               'cmdname' => 'makeindex '.(keys $index->{'input'})[0].'=>'.(keys $index->{'output'})[0],
+              'cli' => \@args,
              };
   push $action->{'command'},'-s',$sty if ($style);
   push $action->{'command'},$in;
-  my $key="makeindex $out";
-  $runPlan->{$key}=$action;
-  push $runPlan->{'order'},$key;
+  my $xkey="makeindex $out";
+  $runPlan->{$xkey}=$action;
+  push $runPlan->{'order'},$xkey;
+  $runPlan->{'allIndexes'}->{$xkey}=1;
 }
 sub buildBibs {
   my ($env,$plans)=@_;
