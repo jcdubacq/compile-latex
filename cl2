@@ -15,9 +15,15 @@ compile-latex - compile files until reaching a fixed point
 Actions are things that C<compile-latex> does if asked.  If no action is
 specified, then B<--build> is used instead.
 
-compile-latex B<[--]in>|B<[--]out>|B<[--]junk>|B<[--]build>|B<[--]clean> I<goals>
+Basic actions are:
 
 compile-latex B<--help>|B<--man>|B<--nroff>|B<--usage>
+
+compile-latex B<[--action build|--build]> I<goals>
+
+compile-latex B<--action [in|out|junk|ignore]> I<goals>
+
+compile-latex B<[--action clean|--clean]> I<goals>
 
 =cut
 
@@ -145,7 +151,7 @@ The various categories are :
 =item * B<out> the console output of the various commands
 
 =item * B<display> the summary of the execution of the plan (1: only
-source files, 2: also jobnames, 3: each command)
+source files, 2: also jobnames, 3: each command (default))
 
 =item * B<result> the result of actions such as B<out>, B<in> or B<junk>.
 
@@ -423,6 +429,8 @@ sub initOptions {
        'help' => [ '--help-action', 'man' ],
        '--man' => [ '--help-action', 'man' ],
        '--nroff' => [ '--help-action', 'nroff' ],
+       '--clean' => [ '--action','clean' ],
+       '--build' => [ '--action','build' ],
        '--index' => [  '--index-input-suffix', '.idx' , '--index-output-suffix', '.ind' ],
       };
   $optionContext->{'optionAliases'}={
