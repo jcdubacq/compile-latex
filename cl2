@@ -42,7 +42,7 @@ use POSIX qw(:sys_wait_h dup dup2);use IO::Select;use IO::Handle;
 
 my ($sourceContext,$optionContext,$execContext,$outContext,$progContext);
 
-$progContext={'tmpfiles' => {}, 'in'=> {}, 'out' => {} , 'junk' => {}, 'ignore' => {}};
+$progContext={'tmpfiles' => {}, 'in'=> {}, 'out' => {} , 'intermediary' => {}, 'ignore' => {}};
 
 # Convenience
 
@@ -100,11 +100,17 @@ sub main {
   foreach my $sourcefile (sort keys %{$optionContext->{'includedFiles'}}) {
     &processSourcefile($sourcefile);
   }
-  foreach my $i ('in','out','junk','ignore') {
+  foreach my $i ('in','out','intermediary','ignore') {
     if (defined($optionContext->{'actions'}->{$i})) {
       foreach my $key (sort keys %{$progContext->{$i}}) {
         &out(1,'result',&encodeGoalLine($key));
       }
+    }
+  }
+  if (defined($optionContext->{'actions'}->{'gitignore'})) {
+    foreach my $key (sort keys %{$progContext->{'gitignore'}}) {
+      my $data='/'.join("\n/",sort keys %{$progContext->{'gitignore'}->{$key}});
+      &outputSection('.gitignore',"compile-latex:$key",$data);
     }
   }
   foreach my $i ('cli') {
@@ -153,7 +159,7 @@ The various categories are :
 =item * B<display> the summary of the execution of the plan (1: only
 source files, 2: also jobnames, 3: each command (default))
 
-=item * B<result> the result of actions such as B<out>, B<in> or B<junk>.
+=item * B<result> the result of actions such as B<out>, B<in> or B<intermediary>.
 
 =back
 
@@ -401,11 +407,12 @@ sub initOptions {
   $optionContext->{'availableActions'}={
                                         'in' => 1,
                                         'out' => 1,
-                                        'junk' => 1,
+                                        'intermediary' => 1,
                                         'ignore' => 1,
                                         'clean' => 1,
                                         'build' => 1,
                                         'cli' => 1,
+                                        'gitignore' => 1,
                                        };
   $optionContext->{'availableVariants'}={
                                          'pdflatex' => 1,
@@ -576,8 +583,8 @@ sub parseOptions {
       &checkOptionArg($localOptions,$x++,$options,undef,'assume-ignore');
     } elsif ($arg eq '--assume-in') {
       &checkOptionArg($localOptions,$x++,$options,undef,'assume-in');
-    } elsif ($arg eq '--assume-junk') {
-      &checkOptionArg($localOptions,$x++,$options,undef,'assume-junk');
+    } elsif ($arg eq '--assume-intermediary') {
+      &checkOptionArg($localOptions,$x++,$options,undef,'assume-intermediary');
     } elsif ($arg eq '--assume-out') {
       &checkOptionArg($localOptions,$x++,$options,undef,'assume-out');
     } elsif ($arg eq '--jobname-only') {
@@ -840,7 +847,7 @@ sub executeCommand {
 
 # Disk Input/Output
 sub fingerprintDir {
-  my ($f)=@_;
+  my ($f,$env)=@_;
   opendir (my $dh, $f) || return "$f:unreadable";
   my $hashing = Digest::MD5->new;
   my @files=();
@@ -853,7 +860,7 @@ sub fingerprintDir {
   my $data;
   foreach my $f (@files) {
     if (-d $f) {
-      $data=&fingerprintDir($f);
+      $data=&fingerprintDir($f,$env);
     } else {
       my ($d,$i,$m,$nl,$u,$g,$rd,$s,$at,$mt,$ct,$bs,$bl) = stat($f);
       $s='unk' unless defined($s);
@@ -864,7 +871,7 @@ sub fingerprintDir {
   return $hashing->hexdigest;
 }
 sub fingerprint {
-  my ($f)=@_;
+  my ($f,$env)=@_;
   my $hash='0';
   return '0' unless (-e $f);
   return &fingerprintDir($f) if (-d $f);
@@ -873,19 +880,23 @@ sub fingerprint {
   $hashing->addfile(*FILE);
   $hash=$hashing->hexdigest;
   close FILE;
+  my ($d,$i,$m,$nl,$u,$g,$rd,$s,$at,$mt,$ct,$bs,$bl) = stat($f);
+  $env->{'checksumCache'}->{$f}=$hash;
+  $env->{'mtimeCache'}->{$f}=$mt;
   return $hash;
 }
 sub fingerprintArray {
   # example: $rule, 'in'
   my $context=shift @_;
   my $key=shift @_;
+  my $env=shift @_;
   my @a=sort keys %{$context->{$key}};
   return 'none' unless (scalar @a);
   my $hash='';
   my $hashing = Digest::MD5->new;
   my $fp;
   foreach my $file (@a) {
-    $fp=&fingerprint($file);
+    $fp=&fingerprint($file,$env);
     $hashing->add($file.$fp);
     $hash.=$file.':'.$fp;
   }
@@ -895,6 +906,49 @@ sub fingerprintArray {
   }
   return $hash;
   return $hashing->hexdigest;
+}
+sub outputSection {
+  my ($file,$section,$data)=@_;
+  my @lines=();
+  my $inside=0;
+  my $done=0;
+  if (-f $file and -r $file) {
+    open FILE,$file;
+    while (my $line=<FILE>) {
+      chomp $line;
+      if ($line =~ /^# start automatic section for $section$/) {
+        $inside=1;
+        if (!$done) {
+          $done=1;
+          push @lines,"# start automatic section for $section";
+          push @lines,$data;
+          push @lines,"# stop automatic section for $section";
+        }
+        next;
+      }
+      if ($line =~ /^# stop automatic section for $section$/) {
+        $inside=0;next;
+      }
+      next if $inside==1;
+      push @lines,$line;
+    }
+    if (!$done) {
+      push @lines,"# start automatic section for $section";
+      push @lines,$data;
+      push @lines,"# stop automatic section for $section";
+    }
+    close FILE;
+  } else {
+    push @lines,"# start automatic section for $section";
+    push @lines,$data;
+    push @lines,"# stop automatic section for $section";
+  }
+  open FILE,">$file";
+  foreach my $line (@lines) {
+    next unless defined($line);
+    print FILE $line."\n";
+  }
+  close FILE;
 }
 
 sub encodeGoalLine {
@@ -915,16 +969,17 @@ sub collapseArrays {
   my $arrays=shift @_;
   my $in=$arrays->{'in'};
   my $out=$arrays->{'out'};
-  my $junk=$arrays->{'junk'};
+  my $intermediary=$arrays->{'intermediary'};
+  my $ignore=$arrays->{'ignore'};
   my $pwd=$arrays->{'pwd'};
   my $home=$arrays->{'home'};
-  # something that is both in and out is junk
+  # something that is both in and out is intermediary
   my $skey;
   my $waslocal={};
   my $wasnotlocal={};
   my $realhome=realpath($home);
   my $eliminateglobal=$optionContext->{'ignoreglobal'};
-  foreach my $array ($in,$out,$junk) {
+  foreach my $array ($in,$out,$intermediary,$ignore) {
     foreach my $key (keys %$array) {
       $skey=$key;
       if ($skey=~m|^/|) {
@@ -941,14 +996,19 @@ sub collapseArrays {
   }
   foreach my $key (keys %$in) {
     if (defined($out->{$key})) {
-      $junk->{$key}=1;
+      $intermediary->{$key}=1;
     }
   }
-  foreach my $key (keys %$junk) {
+  foreach my $key (keys %$intermediary) {
     delete $in->{$key};
     delete $out->{$key};
   }
-  foreach my $array ($in,$out,$junk) {
+  foreach my $key (keys %$ignore) {
+    delete $in->{$key};
+    delete $out->{$key};
+    delete $intermediary->{$key};
+  }
+  foreach my $array ($in,$out,$intermediary,$ignore) {
     foreach my $key (keys %$array) {
       if (defined $waslocal->{$key}) {
         delete $array->{$key};
@@ -1087,21 +1147,34 @@ sub processJob {
   if (
       defined($env->{'actions'}->{'out'}) or
       defined($env->{'actions'}->{'in'}) or
-      defined($env->{'actions'}->{'junk'}) or
-      defined($env->{'actions'}->{'ignore'})
+      defined($env->{'actions'}->{'intermediary'}) or
+      defined($env->{'actions'}->{'ignore'}) or
+      defined($env->{'actions'}->{'gitignore'})
      ) {
-    my $array={'in'=>{},'out'=>{},'junk'=>{},'ignore'=>{}};
+    my $array={'in'=>{},'out'=>{},'intermediary'=>{},'ignore'=>{}};
     foreach my $plankey ('pre','run','post') {
       foreach my $elem (@{$plans->{$plankey}->{'order'}}) {
-        foreach my $i ('in','out','junk','ignore') {
+        next if exists($plans->{$plankey}->{$elem}->{'disabled'});
+        foreach my $i ('in','out','intermediary','ignore') {
           &addHashInPlace($array->{$i},$plans->{$plankey}->{$elem}->{$i});
         }
       }
     }
     $array->{'home'}=$env->{'home'};
     $array->{'pwd'}=$env->{'pwd'};
+    $array->{'ignore'}->{$env->{'meta'}}=1;
     &collapseArrays($array);
-    foreach my $i ('in','out','junk','ignore') {
+    if (defined($env->{'actions'}->{'gitignore'})) {
+      my $kkey=$env->{'fulltexsource'};
+      $kkey.="/$jobname" if ($jobname ne $env->{'defaultjobname'});
+      if (!defined($progContext->{'gitignore'}->{$kkey})) {
+        $progContext->{'gitignore'}->{$kkey}={};
+      }
+      foreach my $i ('out','intermediary','ignore') {
+        &addHashInPlace($progContext->{'gitignore'}->{$kkey},$array->{$i});
+      }
+    }
+    foreach my $i ('in','out','intermediary','ignore') {
       if (defined($env->{'actions'}->{$i})) {
         &addHashInPlace($progContext->{$i},$array->{$i});
       }
@@ -1109,7 +1182,7 @@ sub processJob {
   }
   if (defined($env->{'actions'}->{'cli'})) {
     my @args=('PROGNAME');
-    foreach my $from ('in','junk','out','ignore') {
+    foreach my $from ('in','intermediary','out','ignore') {
       foreach my $key (sort keys %{$plans->{'run'}->{'latex'}->{$from}}) {
         push @args,"--assume-$from",&encodeGoalLine($key) if ($from ne 'in' or $key ne $env->{'texsource'}) and ($from ne 'out' or $key ne $env->{'outputLatex'});
       }
@@ -1118,7 +1191,10 @@ sub processJob {
       my $any=1;
       my $stem=$env->{'stem'};
       foreach my $key (keys %{$plans->{'run'}->{'updateBibs'}->{'allbibs'}}) {
-        if ($any) {$any=0;push @args,'--manual';};
+        if ($any) {
+          $any=0;push @args,'--manual';
+        }
+        ;
         if ($key eq "$stem.aux") {
           push @args,'--bibtex';
         } elsif ($key=~/^$stem(.*)$/) {
@@ -1143,16 +1219,17 @@ sub processJob {
 sub runPlanParts {
   my ($env,$plan,$subclass,$counter)=@_;
   my $alldone=1;
+  &out(3,'plan',$plan);
   my $order=$plan->{'order'};
   $counter++ if scalar @$order;
   foreach my $elem (@$order) {
     my $part=$plan->{$elem};
     if (!exists($part->{'always'})) {
-      my $fingerprintIn=&fingerprintArray($part,'in');
-      my $fingerprintOut=&fingerprintArray($part,'out');
-      my $fingerprintJunk=&fingerprintArray($part,'junk');
-      my $fp="$fingerprintIn $fingerprintOut $fingerprintJunk";
-      my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintJunk'});
+      my $fingerprintIn=&fingerprintArray($part,'in',$env);
+      my $fingerprintOut=&fingerprintArray($part,'out',$env);
+      my $fingerprintIntermediary=&fingerprintArray($part,'intermediary',$env);
+      my $fp="$fingerprintIn $fingerprintOut $fingerprintIntermediary";
+      my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintIntermediary'});
       if ($oldfp eq $fp) {
         &out(1,'plan',"Skipping $elem");
         next;
@@ -1160,7 +1237,7 @@ sub runPlanParts {
         &out(2,'plan',"Not skipping $elem because\n$fp is not\n$oldfp");
       }
       $part->{'fingerprintIn'}=$fingerprintIn;
-      $part->{'fingerprintJunk'}=$fingerprintJunk;
+      $part->{'fingerprintIntermediary'}=$fingerprintIntermediary;
     }
     &out(1,'plan',"Trying $elem");
     my $return; # 1 should be returned if nothing was done, 0 if something was done
@@ -1230,7 +1307,7 @@ sub buildLatex {
   }
   $latex->{'ignore'}->{$env->{'stem'}.".log"}=1;
   $latex->{'ignore'}->{$env->{'stem'}.".fls"}=1;
-  foreach my $from ('in','out','junk','ignore') {
+  foreach my $from ('in','out','intermediary','ignore') {
     if (defined $env->{"assume-$from"}) {
       my $fromH=$env->{"assume-$from"};
       foreach my $key (keys %$fromH) {
@@ -1239,7 +1316,7 @@ sub buildLatex {
     }
   }
   foreach my $key (keys %{$latex->{'ignore'}}) {
-    foreach my $xx ('in','out','junk') {
+    foreach my $xx ('in','out','intermediary') {
       delete $latex->{$xx}->{$key} if exists $latex->{$xx}->{$key};
     }
   }
@@ -1319,7 +1396,7 @@ sub buildIndex {
               'in' => { $in=>1,$sty=>1 },
               'out' => { $out=>1 },
               'ignore' => {$log => 1},
-              'junk' => {},
+              'intermediary' => {},
               'callback' => 'indexCallback',
               'style' => $style,
               'styleFile'=> $sty,
@@ -1330,7 +1407,7 @@ sub buildIndex {
              };
   push $action->{'command'},'-s',$sty if ($style);
   push $action->{'command'},$in;
-  my $xkey="makeindex $out";
+  my $xkey="makeindex_$out";
   $runPlan->{$xkey}=$action;
   push $runPlan->{'order'},$xkey;
   $runPlan->{'allIndexes'}->{$xkey}=1;
@@ -1374,7 +1451,7 @@ sub buildBib {
                'in' => {$fakebib => 1},
                'out'=> {"$stem.bbl"=>1},
                'ignore' => {"$stem.blg"=>1},
-               'junk' => {},
+               'intermediary' => {},
                'callback' => 'bibCallback',
               };
   $env->{'bibtexname'}="bibtex" unless (exists $env->{'bibtexname'});
@@ -1443,7 +1520,7 @@ sub updateBibsCallback {
 }
 sub autoBibCallback {
   my ($env,$plan,$part,$subclass)=@_;
-  my @outlatexfiles=(keys %{$plan->{'latex'}->{'out'}},keys %{$plan->{'latex'}->{'junk'}});
+  my @outlatexfiles=(keys %{$plan->{'latex'}->{'out'}},keys %{$plan->{'latex'}->{'intermediary'}});
   my $bibfiles={};
   foreach my $file (@outlatexfiles) {
     open FILE,$file or next;
@@ -1473,12 +1550,16 @@ sub bibCallback {
   if ($status) {
     &finish(1,$env->{'cmdname'}." failed with status $status");
   }
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out');
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
   return 0;
 }
 sub indexCallback {
   my ($env,$plan,$part,$subclass)=@_;
-  return 1 unless -f ($part->{'sourceFile'});
+  if (! -f $part->{'sourceFile'}) {
+    $part->{'disabled'}=1;
+    return 1;
+  }
+  delete $part->{'disabled'} if exists($part->{'disabled'});
   &out(2,'display',$subclass) if defined($subclass);
   &out(3,'display',$part->{'cmdname'});
   if ($part->{'style'} and ! -f $part->{'styleFile'}) {
@@ -1492,7 +1573,7 @@ sub indexCallback {
   if ($status) {
     &finish(1,$env->{'cmdname'}." failed with status $status");
   }
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out');
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
   return 0;
 }
 sub latexCallback {
@@ -1505,20 +1586,20 @@ sub latexCallback {
     &finish(1,"TeX failed with status $status");
   }
   # Reevaluate inputs and outputs
-  my ($out,$in,$junk,$pwd)=({},{},{},undef);
+  my ($out,$in,$intermediary,$pwd)=({},{},{},undef);
   open FILE,$env->{'stem'}.".fls" or die 'Input/output list was not generated!';
   my $line;
   while ($line=<FILE>) {
     chomp $line; 
     if ($line=~/^INPUT (.*)$/) {
       if (defined $out->{$1}) {
-        $junk->{$1}=1;
+        $intermediary->{$1}=1;
       } else {
         $in->{$1}=1;
       }
     } elsif ($line=~/^OUTPUT (.*)$/) {
       if (defined $in->{$1}) {
-        $junk->{$1}=1;
+        $intermediary->{$1}=1;
       } else {
         $out->{$1}=1;
       }
@@ -1530,19 +1611,30 @@ sub latexCallback {
   }
   close FILE;
   $out->{$env->{'stem'}.".fls"}=1;
-  my $arrays={'in'=>$in,'out'=>$out,'junk'=>$junk,'pwd'=>$pwd,'home'=>$pwd};
+  my $arrays={'in'=>$in,'out'=>$out,'intermediary'=>$intermediary,'pwd'=>$pwd,'home'=>$pwd};
+  foreach my $source ('out','intermediary','ignore') {
+    foreach my $f (keys %{$part->{$source}}) {
+      if (-f $f and !exists($part->{'ignore'}->{$f})) {
+        my $x=$env->{'checksumCache'}->{$f};
+        my $xx=&fingerprint($f,$env);
+        if ($x eq $xx) {
+          $arrays->{$source}->{$f}=1;
+        }
+      }
+    }
+  }
   &collapseArrays($arrays);
   foreach my $key (keys %{$part->{'ignore'}}) {
-    foreach my $x ($in,$out,$junk) {
+    foreach my $x ($in,$out,$intermediary) {
       delete $x->{$key} if exists $x->{$key};
     }
   }
   $part->{'in'}=$in;
   $part->{'out'}=$out;
-  $part->{'junk'}=$junk;
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out');
+  $part->{'intermediary'}=$intermediary;
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
   # $part->{'fingerprintIn'}=&fingerprintArray($part,'in');
-  # $part->{'fingerprintJunk'}=&fingerprintArray($part,'junk');
+  # $part->{'fingerprintIntermediary'}=&fingerprintArray($part,'intermediary');
   return 0;
 }
 
@@ -1565,7 +1657,7 @@ sub loadPlanPart {
   $xpart->{'fingerprintCmd'}=$hashing->hexdigest;
   my $filename=File::Spec->catfile($env->{'meta'},$elem);
   $xpart->{'fingerprintOut'}='new';
-  $xpart->{'fingerprintJunk'}='new';
+  $xpart->{'fingerprintIntermediary'}='new';
   $xpart->{'fingerprintIn'}='new';
   if (-f $filename) {
     open FILE,"$filename" or die "Could not save metadata to $filename";
@@ -1575,14 +1667,14 @@ sub loadPlanPart {
     do {
       eval $string;
     };
-    foreach my $i ('out','in','junk') {
+    foreach my $i ('out','in','intermediary') {
       $xpart->{$i}={} unless defined($xpart->{$i});
       &addHashInPlace($xpart->{$i},$part->{$i});
     }
     if ($part->{'fingerprintCmd'} eq $xpart->{'fingerprintCmd'}) {
       &out(1,'plan','Integrating saved fingerprints');
       $xpart->{'fingerprintOut'}=$part->{'fingerprintOut'};
-      $xpart->{'fingerprintJunk'}=$part->{'fingerprintJunk'};
+      $xpart->{'fingerprintIntermediary'}=$part->{'fingerprintIntermediary'};
       $xpart->{'fingerprintIn'}=$part->{'fingerprintIn'};
     }
   }

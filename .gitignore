@@ -1,0 +1,95 @@
+# start automatic section for compile-latex:tests/00.tex
+/tests/.compile-latex/00
+/tests/00.aux
+/tests/00.fls
+/tests/00.log
+/tests/00.pdf
+# stop automatic section for compile-latex:tests/00.tex
+# start automatic section for compile-latex:tests/01.tex
+/tests/.compile-latex/01
+/tests/01.aux
+/tests/01.fls
+/tests/01.idx
+/tests/01.ilg
+/tests/01.ind
+/tests/01.log
+/tests/01.pdf
+# stop automatic section for compile-latex:tests/01.tex
+# start automatic section for compile-latex:tests/02.tex
+/tests/.compile-latex/02
+/tests/02.adx
+/tests/02.and
+/tests/02.aux
+/tests/02.fls
+/tests/02.idx
+/tests/02.ilg
+/tests/02.ind
+/tests/02.log
+/tests/02.pdf
+# stop automatic section for compile-latex:tests/02.tex
+# start automatic section for compile-latex:tests/03.tex
+/tests/.compile-latex/03
+/tests/03.aux
+/tests/03.bbl
+/tests/03.blg
+/tests/03.fls
+/tests/03.log
+/tests/03.pdf
+# stop automatic section for compile-latex:tests/03.tex
+# start automatic section for compile-latex:tests/04.tex
+/tests/.compile-latex/04
+/tests/04.aux
+/tests/04.bbl
+/tests/04.blg
+/tests/04.fls
+/tests/04.log
+/tests/04.pdf
+/tests/xampl.aux
+/tests/xampl.bbl
+/tests/xampl.blg
+# stop automatic section for compile-latex:tests/04.tex
+# start automatic section for compile-latex:tests/05.tex
+/tests/.compile-latex/05
+/tests/05-annex.tex
+/tests/05.aux
+/tests/05.fls
+/tests/05.log
+/tests/05.pdf
+# stop automatic section for compile-latex:tests/05.tex
+# start automatic section for compile-latex:tests/06.tex/06a
+/tests/.compile-latex/06a
+/tests/06a.aux
+/tests/06a.fls
+/tests/06a.log
+/tests/06a.pdf
+# stop automatic section for compile-latex:tests/06.tex/06a
+# start automatic section for compile-latex:tests/06.tex/06b
+/tests/.compile-latex/06b
+/tests/06b.aux
+/tests/06b.fls
+/tests/06b.log
+/tests/06b.pdf
+# stop automatic section for compile-latex:tests/06.tex/06b
+# start automatic section for compile-latex:tests/07.tex
+/tests/.compile-latex/07
+/tests/07.aux
+/tests/07.bbl
+/tests/07.blg
+/tests/07.dvi
+/tests/07.fls
+/tests/07.log
+# stop automatic section for compile-latex:tests/07.tex
+# start automatic section for compile-latex:tests/08.tex
+/tests/.compile-latex/08
+/tests/08.aux
+/tests/08.fls
+/tests/08.log
+/tests/08.xdv
+# stop automatic section for compile-latex:tests/08.tex
+# start automatic section for compile-latex:tests/09.tex
+/tests/.compile-latex/09
+/tests/09.aux
+/tests/09.fls
+/tests/09.log
+/tests/09.pdf
+# stop automatic section for compile-latex:tests/09.tex
