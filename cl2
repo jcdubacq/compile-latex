@@ -1615,6 +1615,7 @@ sub latexCallback {
   foreach my $source ('out','intermediary','ignore') {
     foreach my $f (keys %{$part->{$source}}) {
       if (-f $f and !exists($part->{'ignore'}->{$f})) {
+        next if defined($arrays->{$source}->{$f});
         my $x=$env->{'checksumCache'}->{$f};
         my $xx=&fingerprint($f,$env);
         if ($x eq $xx) {
