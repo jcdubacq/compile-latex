@@ -98,7 +98,8 @@ action_name>, the name being one of:
 
 =item * B<build> the default action if none other is specified: compile
 
-=item * B<in>, B<out>, B<intermediary>, B<ignore> list files matching the action name.
+=item * B<in>, B<out>, B<intermediary>, B<ignore> list files matching
+the action name.
 
 =item * B<gitignore> outputs a C<.gitignore> file for all generated files.
 
@@ -114,6 +115,24 @@ C<--clean-mode all --action clean>.
 =head1 OPTIONS REFERENCE
 
 =head2 ACTIONS
+
+The actions are global options that specify the work to be done on the
+otherwise specified goals. They are specified as B<--action
+I<actionname>> or equivalently B<--I<actionname>>. The basic option is
+B<build> and iterates the commands necessary to build the result files.
+
+The dump actions B<in>, B<out>, B<intermediary> and B<ignore> will dump
+all files of the same name. The files are not split by source, jobname
+or anything. If this is required, several calls to C<compile-latex> are
+required. Remark that this list is guaranteed to be correct only if a
+successful compilation took place (with B<build> action, either in the
+same run or in previous run).
+
+The B<gitignore> action will generate a C<.gitignore> file for all
+generated files. As above, this list will be correct only if made after
+a successful build.
+
+=head2 ANTICIPATING INPUTS AND OUTPUTS
 
 
 
@@ -227,7 +246,7 @@ sub initLogging {
 
 B<--verbosity> I<category> I<level> Change the verbosity to I<level> in I<category>.
 
-B<--I<category>> I<level> Shortcut, as above (see L</"VERBOSITY">).
+B<--I<category>> I<level> Shortcut, as above.
 
 If verbosity can be mistaken for a target name, use the B<--verbosity>
 form, because the target will take precedence.
@@ -828,6 +847,8 @@ The built-in target C<help> is equivalent to option B<--man>.
   }
   if ($option eq 'usage') {
     $out =~ s/\n\s*End of synopsis.*$/\n/s;
+  } elsif ($option eq 'help') {
+    $out =~ s/\n\n[^\n]*End of synopsis[^\n]*\n/\n\nFor a more readable version of this text, use option --man.\n/s;
   } else {
     $out =~ s/\n.PP\n[^\n]*End of synopsis[^\n]*\n/\n/s;
   }
@@ -1363,28 +1384,34 @@ sub runPlanParts {
 sub buildLatex {
   my ($env,$plans)=@_;
   my $runPlan=$plans->{'run'};
+  my $postPlan=$plans->{'post'};
   my $p=$env->{'variant'};
   if ($p eq 'pdflatex') {
     $env->{'latexname'}='pdflatex';
     $env->{'dviname'}='';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
+    $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvips';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.ps';
   } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex') {
+    $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvipdf';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex') {
+    $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvipdfm';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'xelatex') {
-    $env->{'latexname'}='xelatex --no-pdf';
+    $env->{'dvicallback'}='dvipsCallback';
+    $env->{'latexname'}='xelatex';
+    $env->{'latexargs'}=['--no-pdf'];
     $env->{'dviname'}='xdvipdfmx';
     $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
@@ -1394,7 +1421,7 @@ sub buildLatex {
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } else {
     # unknown chain
-    &finish(1,"Unknown latex chain: $p");
+    &finish(1,"Unknown latex variant: $p");
   }
   my $latex={
              'in' => { $env->{'texsource'} => 1},
@@ -1403,6 +1430,7 @@ sub buildLatex {
                            '--file-line-error',
                            '--recorder',
                            '--jobname',$env->{'stem'},
+                           (defined $env->{'latexargs'}?@{$env->{'latexargs'}}:()),
                            $env->{'texsource'}
                           ],
             };
@@ -1430,6 +1458,19 @@ sub buildLatex {
   }
   $runPlan->{'latex'}=$latex;
   push $runPlan->{'order'},'latex';
+  if (defined $env->{'inputDviFile'}) {
+    my $dvi={
+             'in' => { $env->{'inputDviFile'} => 1 },
+             'out' => { $env->{'outputFile'} => 1 },
+             'callback' => $env->{'dvicallback'},
+             'command' => [ $env->{'dviname'},
+                            '-o', $env->{'outputFile'},
+                            $env->{'inputDviFile'}
+                          ],
+            };
+    $postPlan->{'dvi'}=$dvi;
+    push $postPlan->{'order'},'dvi';
+  }
 }
 sub buildIndices {
   my ($env,$plans)=@_;
@@ -1746,6 +1787,25 @@ sub latexCallback {
   # $part->{'fingerprintIntermediary'}=&fingerprintArray($part,'intermediary');
   return 0;
 }
+sub dvipsCallback {
+  # just execute the dvi command line
+  # no dependencies adjusted
+  my ($env,$plan,$part,$subclass)=@_;
+  &out(2,'display',$subclass) if defined($subclass);
+  &out(3,'display',$env->{'dviname'});
+  my @command=@{$part->{'command'}};
+  if ($env->{'filter'}) {
+    splice @command,1,0,'-q';
+  }
+  my $status=&execCommand(@command);
+  if ($status) {
+    &finish(1,$env->{'dviname'}.' failed with status '.$status);
+  }
+  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
+  $part->{'fingerprintIn'}=&fingerprintArray($part,'in');
+  $part->{'fingerprintIntermediary'}=&fingerprintArray($part,'intermediary');
+  return 0;
+}
 
 sub savePlanPart {
   my ($env,$plan,$elem)=@_;
@@ -1792,13 +1852,45 @@ sub loadPlanPart {
   }
 }
 
-# TODO
-# shorthands for certain options
-# autodoc (in progress)
-# retrofix fingerprintIn if one input was added/deleted, and we have a working cache of it?
-# bibtex management
-# .aux => .auxbib management
+if ('' cmp 'DOC FOOTER') {
 
-# About .auxbib
-# Filter out .aux => $metadir/auxbib
-# if cmdline of bibtex is bibtex $env->{'stem'}.".aux", then modify it as bibtex File::Spec->catfile($env->{'meta'},"auxbib");
+=pod
+
+=head1 BUGS OR FEATURES
+
+A more powerful but linux-only version of this program did exist and
+used strace to find out all dependencies. This may come back. This will
+probably not work under BSD-like (and even more under non-Unix-like)
+environments.
+
+dvips do not allow proper dependencies listing.
+
+This program is untested with Miktex.
+
+This program will probably not work under non-Unix-like environments.
+
+=head1 AUTHOR
+
+Copyright Jean-Christophe Dubacq 2013
+
+=head1 COPYING
+
+This work is licensed under the 2-clause BSD licence. It is explicitly stated
+here that the license does not extend to the data managed by the
+program, in case anyone had doubts.
+
+=head1 TODO
+
+Shorthands for useful options.
+
+Fix documentation (--variants, --assume-*, ...)
+
+Fix (x)dvipdfm(x) dependencies reading from -v option
+
+Test on OSX
+
+Retrofix fingerprintIn if one input was added/deleted, and we have a working cache of it?
+
+=cut
+
+}

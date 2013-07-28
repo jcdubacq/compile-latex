@@ -73,17 +73,17 @@
 # start automatic section for compile-latex:tests/07.tex
 /tests/.compile-latex/07
 /tests/07.aux
-/tests/07.bbl
-/tests/07.blg
 /tests/07.dvi
 /tests/07.fls
 /tests/07.log
+/tests/07.ps
 # stop automatic section for compile-latex:tests/07.tex
 # start automatic section for compile-latex:tests/08.tex
 /tests/.compile-latex/08
 /tests/08.aux
 /tests/08.fls
 /tests/08.log
+/tests/08.pdf
 /tests/08.xdv
 # stop automatic section for compile-latex:tests/08.tex
 # start automatic section for compile-latex:tests/09.tex
