@@ -134,7 +134,86 @@ a successful build.
 
 =head2 ANTICIPATING INPUTS AND OUTPUTS
 
+To avoid (at most) one cycle of compilation, it is possible to give to
+C<compile-latex> advance information about the files that are going to
+be read. This is often more cumbersome to do than compiling one more
+time, but the B<--action cli> mode outputs just the right information so
+that you may record this command line in a Makefile or something else.
 
+If this advance information is false, the automatic discovery of
+dependencies will fix the error after the first compilation.
+
+The command line switches are B<--assume-in>, B<--assume-out>,
+B<--assume-intermediary>, B<--assume-ignore>, each followed by one file
+name.
+
+=head2 VARIANTS
+
+The variants correspond to different ways of compiling TeX files.
+
+The default variant is equivalent to B<--variant pdflatex>. Other
+possible variants are B<dvips> (or B<dvips+latex>), B<dvipdf> (or
+B<dvipdf+latex>), B<dvipdfm> (or B<dvipdfm+latex>), B<xelatex> or
+B<lualatex>. Other variants exist by substituting tex for latex (in
+which case TeX is used instead of LaTeX).
+
+=head2 MISCELLANEOUS OPTIONS
+
+The B<--filter> option allows to filter out most output of LaTeX unless
+input is required or an error occurs. The B<--no-filter> cancels this
+out (see L</"OUTPUT OPTIONS">).
+
+The B<--chdir> option allows to compilation to change to the source file
+directory just before compilation. Paths therefore are relative to the
+source file, not to the place of compilation. The B<--no-chdir> prevents
+this default behavior.
+
+The B<--generated> option is synonymous for B<--action out --action
+intermediary> and outputs
+
+The B<--quiet> option sets various verbosity option to be as quiet as
+possible.
+
+=head2 INDEX OPTIONS
+
+Various options apply to the index generation. All options apply up to
+the next B<--index-output> option. If elements are missing, they will be
+assumed to be the standard C<.idx => .ind> index.
+
+The B<-suffix> options add the given suffix to the job name instead of
+taking the argument as a whole file. The I<usual> way of making an index
+is thus B<--index-output-suffix .ind --index-input-suffix .idx>.
+
+The index options are
+
+=over
+
+=item * B<index-output[-suffix]> the output of the makeindex command
+
+=item * B<index-input[-suffix]> the input of the makeindex command
+
+=item * B<index-style[-suffix]> the style of the makeindex command
+
+=item * B<index-log[-suffix]> the log output of the makeindex command
+
+=item * B<index-options> some more options to makeindex (separated by spaces)
+
+=back
+
+=head2 BIBLIOGRAPHY OPTIONS
+
+Since in automatic mode (without B<--manual>) all bibtex-able files are
+automatically discovered and processed, these options are not often
+useful.
+
+B<--bibtex-file> is followed by the name of a file to be processed by
+bibtex. B<--bibtex-file-suffix> is the same but only the suffix to
+the job name has to be passed.
+
+B<--bibtex> is synonymous for B<--bibtex-file-suffix .aux>.
+
+B<--bibtex-program> is followed by a (space-separated) string to call
+the BibTeX executable. Default is just C<bibtex>.
 
 =cut
 
@@ -224,6 +303,34 @@ sub main {
       my $data='/'.join("\n/",sort keys %{$progContext->{'gitignore'}->{$key}});
       &outputSection('.gitignore',"compile-latex:$key",$data);
     }
+  }
+  if (defined($optionContext->{'actions'}->{'clean'})) {
+    my $mode=$optionContext->{'cleanMode'};
+    my $removed=0;
+    foreach my $key (sort keys %{$progContext->{'gitignore'}}) {
+      foreach my $file (sort keys %{$progContext->{'gitignore'}->{$key}}) {
+        if (($mode eq 'simple' or $mode eq 'all') and
+            !defined($progContext->{'latexresult'}->{$file}) and
+            !defined($progContext->{'metadirs'}->{$file})
+           ) {
+          if (-f $file) {
+            unlink $file;
+            $removed++;
+          }
+        } elsif (($mode eq 'meta' or $mode eq 'all') and defined($progContext->{'metadirs'}->{$file})) {
+          if (-d $file) {
+            remove_tree($file);
+            $removed++;
+          }
+        } elsif (($mode eq 'result' or $mode eq 'all') and defined($progContext->{'latexresult'}->{$file})) {
+          if (-f $file) {
+            unlink $file;
+            $removed++;
+          }
+        }
+      }
+    }
+    &out(3,'display',"removed $removed files");
   }
   foreach my $i ('cli') {
     if (defined($optionContext->{'actions'}->{$i})) {
@@ -527,13 +634,11 @@ sub initOptions {
                                         'gitignore' => 1,
                                        };
   $optionContext->{'availableClean'}={
-                                        'all' => 1,
-                                        'meta' => 1,
-                                        'result' => 1,
-                                        'simple' => 1,
-                                        'before' => 1,
-                                        'reboot' => 1,
-                                       };
+                                      'all' => 1,
+                                      'meta' => 1,
+                                      'result' => 1,
+                                      'simple' => 1,
+                                     };
   $optionContext->{'availableVariants'}={
                                          'pdflatex' => 1,
                                          'pdftex' => 1,
@@ -649,7 +754,7 @@ sub parseOptions {
       $localOptions->{'variant'}=$option[$x];
     } elsif ($arg eq '--clean-mode') {
       &checkOptionArg($localOptions,$x++,$options,'availableClean');
-      $localOptions->{'cleanMode'}=$option[$x];
+      $optionContext->{'cleanMode'}=$option[$x];
     } elsif ($arg eq '--no-chdir') {
       $localOptions->{'chdir'}=0;
     } elsif ($arg eq '--chdir') {
@@ -658,6 +763,8 @@ sub parseOptions {
       $localOptions->{'filter'}=0;
     } elsif ($arg eq '--filter') {
       $localOptions->{'filter'}=1;
+    } elsif ($arg eq '--clean-before') {
+      $localOptions->{'cleanbefore'}=1;
     } elsif ($arg eq '--manual') {
       $localOptions->{'manual'}=1;
     } elsif ($arg eq '--no-global') {
@@ -692,19 +799,19 @@ sub parseOptions {
       $index->{'log'}={$a=>1};
       $index->{'logIsSuffix'}=1;
     } elsif ($arg eq '--index-output') {
+      $index=&finishIndex($localOptions,$index);
       my $a=&checkOptionArg($index,$x++,$options,undef,'outputCandidate');
       $index->{'output'}={$a=>1};
       $index->{'outputIsSuffix'}=0;
     } elsif ($arg eq '--index-output-suffix') {
+      $index=&finishIndex($localOptions,$index);
       my $a=&checkOptionArg($index,$x++,$options,undef,'outputCandidate');
       $index->{'output'}={$a=>1};
       $index->{'outputIsSuffix'}=1;
     } elsif ($arg eq '--index-input') {
-      $index=&finishIndex($localOptions,$index);
       &checkOptionArg($index,$x++,$options,undef,'input');
       $index->{'inputIsSuffix'}=0;
     } elsif ($arg eq '--index-input-suffix') {
-      $index=&finishIndex($localOptions,$index);
       &checkOptionArg($index,$x++,$options,undef,'input');
       $index->{'inputIsSuffix'}=1;
     } elsif ($arg eq '--assume-ignore') {
@@ -1143,6 +1250,10 @@ sub collapseArrays {
   my $out=$arrays->{'out'};
   my $intermediary=$arrays->{'intermediary'};
   my $ignore=$arrays->{'ignore'};
+  my $result=$arrays->{'result'};
+  my $meta=$arrays->{'meta'};
+  $result={} unless defined $result;
+  $meta={} unless defined $meta;
   my $pwd=$arrays->{'pwd'};
   my $home=$arrays->{'home'};
   # something that is both in and out is intermediary
@@ -1151,7 +1262,7 @@ sub collapseArrays {
   my $wasnotlocal={};
   my $realhome=realpath($home);
   my $eliminateglobal=$optionContext->{'ignoreglobal'};
-  foreach my $array ($in,$out,$intermediary,$ignore) {
+  foreach my $array ($in,$out,$intermediary,$ignore,$result,$meta) {
     foreach my $key (keys %$array) {
       $skey=$key;
       if ($skey=~m|^/|) {
@@ -1180,7 +1291,7 @@ sub collapseArrays {
     delete $out->{$key};
     delete $intermediary->{$key};
   }
-  foreach my $array ($in,$out,$intermediary,$ignore) {
+  foreach my $array ($in,$out,$intermediary,$ignore,$result,$meta) {
     foreach my $key (keys %$array) {
       if (defined $waslocal->{$key}) {
         delete $array->{$key};
@@ -1236,13 +1347,13 @@ sub processSourcefile {
   my $targetdir = realpath($filename);
   my ($volume,$directories,$file) = File::Spec->splitpath( $targetdir );
   my $dir = File::Spec->catdir($volume,$directories);
-  $sourceContext->{'localdir'}=$dir;
+  $sourceContext->{'localdir'}='';
   if ($sourceContext->{'chdir'}) {
     &out(1,'exec',"chdir to $dir");
     chdir $dir;
     $sourceContext->{'texsource'}=$file;
     $sourceContext->{'pwd'}=$dir;
-    $sourceContext->{'localdir'}='';
+    $sourceContext->{'localdir'}=$dir.'/';
     $defaultjobname=$file;
   }
   $defaultjobname=~s/\.tex$//g;
@@ -1334,6 +1445,7 @@ sub processJob {
       defined($env->{'actions'}->{'in'}) or
       defined($env->{'actions'}->{'intermediary'}) or
       defined($env->{'actions'}->{'ignore'}) or
+      defined($env->{'actions'}->{'clean'}) or
       defined($env->{'actions'}->{'gitignore'})
      ) {
     my $array={'in'=>{},'out'=>{},'intermediary'=>{},'ignore'=>{}};
@@ -1348,8 +1460,13 @@ sub processJob {
     $array->{'home'}=$env->{'home'};
     $array->{'pwd'}=$env->{'pwd'};
     $array->{'ignore'}->{$env->{'meta'}}=1;
+    $array->{'meta'}->{$env->{'meta'}}=1;
+    $array->{'result'}->{$env->{'outputFile'}}=1;
     &collapseArrays($array);
-    if (defined($env->{'actions'}->{'gitignore'})) {
+    my $xresult=(keys %{$array->{'result'}})[0];
+    if (defined($env->{'actions'}->{'clean'}) or
+        defined($env->{'actions'}->{'gitignore'})
+       ) {
       my $kkey=$env->{'fulltexsource'};
       $kkey.="/$jobname" if ($jobname ne $env->{'defaultjobname'});
       if (!defined($progContext->{'gitignore'}->{$kkey})) {
@@ -1358,6 +1475,9 @@ sub processJob {
       foreach my $i ('out','intermediary','ignore') {
         &addHashInPlace($progContext->{'gitignore'}->{$kkey},$array->{$i});
       }
+      my $output=$env->{'outputFile'};
+      $progContext->{'latexresult'}->{$xresult}=1;
+      $progContext->{'metadirs'}->{(keys %{$array->{'meta'}})[0]}=1;
     }
     foreach my $i ('in','out','intermediary','ignore') {
       if (defined($env->{'actions'}->{$i})) {
@@ -1414,15 +1534,15 @@ sub runPlanParts {
       my $fingerprintOut=&fingerprintArray($part,'out',$env);
       my $fingerprintIntermediary=&fingerprintArray($part,'intermediary',$env);
       my $fp="$fingerprintIn $fingerprintOut $fingerprintIntermediary";
-      my $oldfp=join(' ',$part->{'fingerprintIn'},$part->{'fingerprintOut'},$part->{'fingerprintIntermediary'});
+      my $oldfp=join(' ',$part->{'fingerprint-in'},$part->{'fingerprint-out'},$part->{'fingerprint-intermediary'});
       if ($oldfp eq $fp) {
         &out(1,'plan',"Skipping $elem");
         next;
       } else {
         &out(2,'plan',"Not skipping $elem because\n$fp is not\n$oldfp");
       }
-      $part->{'fingerprintIn'}=$fingerprintIn;
-      $part->{'fingerprintIntermediary'}=$fingerprintIntermediary;
+      $part->{'fingerprint-in'}=$fingerprintIn;
+      $part->{'fingerprint-intermediary'}=$fingerprintIntermediary;
     }
     &out(1,'plan',"Trying $elem");
     my $return; # 1 should be returned if nothing was done, 0 if something was done
@@ -1443,47 +1563,46 @@ sub buildLatex {
   my $postPlan=$plans->{'post'};
   my $p=$env->{'variant'};
   $env->{'latexmode'}='latex';
-  if ($p eq 'pdflatex') {
+  if ($p eq 'pdflatex' or $p eq 'tex' or $p eq 'pdftex') {
     $env->{'latexname'}='pdflatex';
     $env->{'dviname'}='';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'pdftex' or $p eq 'tex') {
-    $env->{'latexname'}='pdftex';
-    $env->{'latexmode'}='tex';
-    $env->{'dviname'}='';
-    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
+  } elsif ($p eq 'dvips' or $p eq 'dvips+latex' or $p eq 'dvips+tex') {
     $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvips';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.ps';
-  } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex') {
+  } elsif ($p eq 'dvipdf' or $p eq 'dvipdf+latex' or $p eq 'dvipdf+tex') {
     $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvipdf';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex') {
+  } elsif ($p eq 'dvipdfm' or $p eq 'dvipdfm+latex' or $p eq 'dvipdfm+tex') {
     $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
     $env->{'dviname'}='dvipdfm';
     $env->{'inputDviFile'}=$env->{'stem'}.'.dvi';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'xelatex') {
+  } elsif ($p eq 'xelatex' or $p eq 'xetex') {
     $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='xelatex';
     $env->{'latexargs'}=['--no-pdf'];
     $env->{'dviname'}='xdvipdfmx';
     $env->{'inputDviFile'}=$env->{'stem'}.'.xdv';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
-  } elsif ($p eq 'lualatex') {
+  } elsif ($p eq 'lualatex' or $p eq 'luatex') {
     $env->{'latexname'}='lualatex';
     $env->{'dviname'}='';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } else {
     # unknown chain
     &finish(1,"Unknown latex variant: $p");
+  }
+  if ($p =~ /[^a]tex/) {
+    $env->{'latexmode'}='tex';
+    $env->{'latexname'}=~ s/latex/tex/g;
   }
   my $latex={
              'in' => { $env->{'texsource'} => 1},
@@ -1523,6 +1642,9 @@ sub buildLatex {
   }
   $runPlan->{'latex'}=$latex;
   push $runPlan->{'order'},'latex';
+  if ($env->{'cleanbefore'}) {
+    $latex->{'always'}=1;
+  }
   if (defined $env->{'inputDviFile'}) {
     my $dvi={
              'in' => { $env->{'inputDviFile'} => 1 },
@@ -1547,7 +1669,7 @@ sub buildIndices {
 sub buildIndex {
   my ($env,$runPlan,$index)=@_;
   my $style=0;
-  my ($in,$out,$sty,$log);
+  my ($in,$out,$sty,$log)=();
   my @args=();
   if (!defined($index->{'input'})) {
     $index->{'input'}={'.idx'=>1};
@@ -1620,6 +1742,8 @@ sub buildIndex {
               'cli' => \@args,
              };
   push $action->{'command'},'-s',$sty if ($style);
+  push $action->{'command'},'-t',$log if ($log);
+  push $action->{'command'},split(/ /,$index->{'options'}) if exists($index->{'options'});
   push $action->{'command'},$in;
   my $xkey="makeindex_$out";
   $runPlan->{$xkey}=$action;
@@ -1764,7 +1888,7 @@ sub bibCallback {
   if ($status) {
     &finish(1,$env->{'cmdname'}." failed with status $status");
   }
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
+  $part->{'fingerprint-out'}=&fingerprintArray($part,'out',$env);
   return 0;
 }
 sub indexCallback {
@@ -1787,7 +1911,7 @@ sub indexCallback {
   if ($status) {
     &finish(1,$env->{'cmdname'}." failed with status $status");
   }
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
+  $part->{'fingerprint-out'}=&fingerprintArray($part,'out',$env);
   return 0;
 }
 sub latexCallback {
@@ -1795,6 +1919,19 @@ sub latexCallback {
   &out(2,'display',$subclass) if defined($subclass);
   &out(3,'display',$env->{'latexname'});
   $outContext->{'filter'}=$env->{'filter'};
+  if ($part->{'always'}) {
+    delete $part->{'always'};
+    if ($env->{'cleanbefore'}) {
+      foreach my $source ('out','intermediary') {
+        foreach my $file (keys %{$part->{$source}}) {
+          unlink $file if (-f $file);
+        }
+      }
+    }
+    foreach my $source ('in','out','intermediary') {
+      $part->{'fingerprint-'.$source}=&fingerprintArray($part,$source,$env);
+    }
+  }
   my $status=&execCommand(@{$part->{'command'}});
   if ($status) {
     &finish(1,"TeX failed with status $status");
@@ -1831,6 +1968,7 @@ sub latexCallback {
       if (-f $f and !exists($part->{'ignore'}->{$f})) {
         next if defined($arrays->{$source}->{$f});
         my $x=$env->{'checksumCache'}->{$f};
+        $x='undef' if (!defined $x);
         my $xx=&fingerprint($f,$env);
         if ($x eq $xx) {
           $arrays->{$source}->{$f}=1;
@@ -1847,9 +1985,9 @@ sub latexCallback {
   $part->{'in'}=$in;
   $part->{'out'}=$out;
   $part->{'intermediary'}=$intermediary;
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
-  $part->{'fingerprintIn'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprintIn'});
-  $part->{'fingerprintIntermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprintIntermediary'});
+  $part->{'fingerprint-out'}=&fingerprintArray($part,'out',$env);
+  $part->{'fingerprint-in'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprint-in'});
+  $part->{'fingerprint-intermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprint-intermediary'});
   return 0;
 }
 sub dvipsCallback {
@@ -1866,9 +2004,9 @@ sub dvipsCallback {
   if ($status) {
     &finish(1,$env->{'dviname'}.' failed with status '.$status);
   }
-  $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
-  $part->{'fingerprintIn'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprintIn'});
-  $part->{'fingerprintIntermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprintIntermediary'});
+  $part->{'fingerprint-out'}=&fingerprintArray($part,'out',$env);
+  $part->{'fingerprint-in'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprint-in'});
+  $part->{'fingerprint-intermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprint-intermediary'});
   return 0;
 }
 
@@ -1890,9 +2028,9 @@ sub loadPlanPart {
   $hashing->add(join(' ',@{$xpart->{'command'}}));
   $xpart->{'fingerprintCmd'}=$hashing->hexdigest;
   my $filename=File::Spec->catfile($env->{'meta'},$elem);
-  $xpart->{'fingerprintOut'}='new';
-  $xpart->{'fingerprintIntermediary'}='new';
-  $xpart->{'fingerprintIn'}='new';
+  $xpart->{'fingerprint-out'}='new';
+  $xpart->{'fingerprint-intermediary'}='new';
+  $xpart->{'fingerprint-in'}='new';
   if (-f $filename) {
     open FILE,"$filename" or die "Could not save metadata to $filename";
     my $string=<FILE>;
@@ -1910,9 +2048,9 @@ sub loadPlanPart {
       if (exists($part->{'disabled'})) {
         $xpart->{'disabled'}=$part->{'disabled'};
       }
-      $xpart->{'fingerprintOut'}=$part->{'fingerprintOut'};
-      $xpart->{'fingerprintIntermediary'}=$part->{'fingerprintIntermediary'};
-      $xpart->{'fingerprintIn'}=$part->{'fingerprintIn'};
+      $xpart->{'fingerprint-out'}=$part->{'fingerprint-out'};
+      $xpart->{'fingerprint-intermediary'}=$part->{'fingerprint-intermediary'};
+      $xpart->{'fingerprint-in'}=$part->{'fingerprint-in'};
     }
   }
 }
@@ -1933,6 +2071,18 @@ dvips do not allow proper dependencies listing.
 This program is untested with Miktex.
 
 This program will probably not work under non-Unix-like environments.
+
+If some intermediary file is generated at one step, and not regenerated
+if already present (such as with the C<filecontents> package), and the
+metadata is deleted but not the file, then C<compile-latex> will not be
+able to see that this file could be regenerated. This should not happen
+when cleaning with the B<clean> action.
+
+No tests were conducted with something else than bibtex and makeindex.
+
+When using some \write18 commands, the dependency tracking is wrong
+(unless the strace option is activated). Some recent auto-makeindex and
+auto-bibtex functionality are likely useless (but not harmful).
 
 =head1 AUTHOR
 

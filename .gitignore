@@ -50,7 +50,6 @@
 # stop automatic section for compile-latex:tests/04.tex
 # start automatic section for compile-latex:tests/05.tex
 /tests/.compile-latex/05
-/tests/05-annex.tex
 /tests/05.aux
 /tests/05.fls
 /tests/05.log
@@ -73,6 +72,8 @@
 # start automatic section for compile-latex:tests/07.tex
 /tests/.compile-latex/07
 /tests/07.aux
+/tests/07.bbl
+/tests/07.blg
 /tests/07.dvi
 /tests/07.fls
 /tests/07.log
