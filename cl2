@@ -550,8 +550,12 @@ sub initOptions {
   $optionContext->{'standardTargets'}
     = {
        '--help' => [ '--help-action', 'help' ],
+       '--in' => [ '--action', 'in' ],
+       '--intermediary' => [ '--action', 'intermediary' ],
+       '--generated' => [ '--action', 'out', '--action','intermediary' ],
        '-h' => [ '--help-action', 'help' ],
        '--usage' => [ '--help-action', 'usage' ],
+       '--quiet' => [ '--verbosity', 'display', '0', '--verbosity','out','0','--verbosity','err','0' ],
        'help' => [ '--help-action', 'man' ],
        '--man' => [ '--help-action', 'man' ],
        '--nroff' => [ '--help-action', 'nroff' ],
@@ -1004,7 +1008,7 @@ sub fingerprint {
   my $hash='0';
   return '0' unless (-e $f);
   return &fingerprintDir($f) if (-d $f);
-  open FILE,"$f" or return "$f:0";
+  open FILE,"$f" or return 'unreadable';
   my $hashing = Digest::MD5->new;
   $hashing->addfile(*FILE);
   $hash=$hashing->hexdigest;
@@ -1013,6 +1017,19 @@ sub fingerprint {
   $env->{'checksumCache'}->{$f}=$hash;
   $env->{'mtimeCache'}->{$f}=$mt;
   return $hash;
+}
+sub fingerprintRetrofit {
+  my ($f,$env)=@_;
+  my $hash='0';
+  return '0' unless (-e $f);
+  return undef if (-d $f);
+  open FILE,"$f" or return 'unreadable';
+  close FILE;
+  return undef unless defined $env->{'checksumCache'}->{$f};
+  return undef unless defined $env->{'mtimeCache'}->{$f};
+  my ($d,$i,$m,$nl,$u,$g,$rd,$s,$at,$mt,$ct,$bs,$bl) = stat($f);
+  return $env->{'checksumCache'}->{$f} if ($mt eq $env->{'mtimeCache'}->{$f});
+  return undef;
 }
 sub fingerprintArray {
   # example: $rule, 'in'
@@ -1026,6 +1043,32 @@ sub fingerprintArray {
   my $fp;
   foreach my $file (@a) {
     $fp=&fingerprint($file,$env);
+    $hashing->add($file.$fp);
+    $hash.=$file.':'.$fp;
+  }
+  foreach my $supp (@_) {
+    $hashing->add(join('|',@$supp));
+    $hash.=join('|',@$supp);
+  }
+  return $hash;
+  return $hashing->hexdigest;
+}
+sub fingerprintArrayRetrofit {
+  # example: $rule, 'in'
+  my $context=shift @_;
+  my $key=shift @_;
+  my $env=shift @_;
+  my $oldfp=shift @_;
+  my @a=sort keys %{$context->{$key}};
+  return 'none' unless (scalar @a);
+  my $hash='';
+  my $hashing = Digest::MD5->new;
+  my $fp;
+  foreach my $file (@a) {
+    $fp=&fingerprintRetrofit($file,$env);
+    if (!defined $fp) {
+      return $oldfp;
+    }
     $hashing->add($file.$fp);
     $hash.=$file.':'.$fp;
   }
@@ -1190,14 +1233,16 @@ sub processSourcefile {
   my $homedir = realpath(getcwd);
   $sourceContext->{'pwd'}=$homedir;
   $sourceContext->{'home'}=$homedir;
+  my $targetdir = realpath($filename);
+  my ($volume,$directories,$file) = File::Spec->splitpath( $targetdir );
+  my $dir = File::Spec->catdir($volume,$directories);
+  $sourceContext->{'localdir'}=$dir;
   if ($sourceContext->{'chdir'}) {
-    my $targetdir = realpath($filename);
-    my ($volume,$directories,$file) = File::Spec->splitpath( $targetdir );
-    my $dir = File::Spec->catdir($volume,$directories);
     &out(1,'exec',"chdir to $dir");
     chdir $dir;
     $sourceContext->{'texsource'}=$file;
     $sourceContext->{'pwd'}=$dir;
+    $sourceContext->{'localdir'}='';
     $defaultjobname=$file;
   }
   $defaultjobname=~s/\.tex$//g;
@@ -1251,6 +1296,17 @@ sub processJob {
   # remove dirpart
   $env->{'stem'}=$jobname;
   # create metadatadir
+  my $localdir=($env->{'localdir'}?$env->{'localdir'}:'.');
+  my $localdirprefix=($env->{'localdir'}?$env->{'localdir'}.'/':'');
+  # if (opendir CURRENTDIR,$localdir) {
+  #   my @matches = grep { /^$env->{'stem'}/ && -f $localdirprefix.$_ } readdir(CURRENTDIR);
+  #   closedir CURRENTDIR;
+  #   foreach my $anticipate (@matches) {
+  #     &out(1,'dev',"Anticipating $localdirprefix$anticipate");
+  #     &fingerprint($localdirprefix.$anticipate,$env);
+  #     &out(1,'dev',$env->{'mtimeCache'});
+  #   }
+  # }
   &buildLatex($env,$plans);
   &buildIndices($env,$plans);
   &buildBibs($env,$plans);
@@ -1386,8 +1442,14 @@ sub buildLatex {
   my $runPlan=$plans->{'run'};
   my $postPlan=$plans->{'post'};
   my $p=$env->{'variant'};
+  $env->{'latexmode'}='latex';
   if ($p eq 'pdflatex') {
     $env->{'latexname'}='pdflatex';
+    $env->{'dviname'}='';
+    $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+  } elsif ($p eq 'pdftex' or $p eq 'tex') {
+    $env->{'latexname'}='pdftex';
+    $env->{'latexmode'}='tex';
     $env->{'dviname'}='';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
   } elsif ($p eq 'dvips' or $p eq 'dvips+latex') {
@@ -1434,6 +1496,9 @@ sub buildLatex {
                            $env->{'texsource'}
                           ],
             };
+  if ($env->{'latexmode'} eq 'latex') {
+    $latex->{'intermediary'}={$env->{'stem'}.'.aux'=>1},
+  }
   if (defined $env->{'inputDviFile'}) {
     $latex->{'out'}={$env->{'inputDviFile'}=>1};
     $env->{'outputLatex'}=$env->{'inputDviFile'};
@@ -1783,8 +1848,8 @@ sub latexCallback {
   $part->{'out'}=$out;
   $part->{'intermediary'}=$intermediary;
   $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
-  # $part->{'fingerprintIn'}=&fingerprintArray($part,'in');
-  # $part->{'fingerprintIntermediary'}=&fingerprintArray($part,'intermediary');
+  $part->{'fingerprintIn'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprintIn'});
+  $part->{'fingerprintIntermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprintIntermediary'});
   return 0;
 }
 sub dvipsCallback {
@@ -1802,8 +1867,8 @@ sub dvipsCallback {
     &finish(1,$env->{'dviname'}.' failed with status '.$status);
   }
   $part->{'fingerprintOut'}=&fingerprintArray($part,'out',$env);
-  $part->{'fingerprintIn'}=&fingerprintArray($part,'in');
-  $part->{'fingerprintIntermediary'}=&fingerprintArray($part,'intermediary');
+  $part->{'fingerprintIn'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprintIn'});
+  $part->{'fingerprintIntermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprintIntermediary'});
   return 0;
 }
 
@@ -1883,7 +1948,7 @@ program, in case anyone had doubts.
 
 Shorthands for useful options.
 
-Fix documentation (--variants, --assume-*, ...)
+Fix documentation (--variant, --assume-*, ...)
 
 Fix (x)dvipdfm(x) dependencies reading from -v option
 
