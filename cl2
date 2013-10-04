@@ -671,10 +671,12 @@ sub initOptions {
        '--build' => [ '--action','build' ],
        '-B' => [ '--action','build' ],
        '-f' => [ '--filter' ],
+       '--jobname-auto' => [ '--jobname','__auto__' ],
        '--index' => [  '--index-input-suffix', '.idx' , '--index-output-suffix', '.ind' ],
       };
   $optionContext->{'optionAliases'}={
                                      '--index-file-suffix' => '--index-input-suffix',
+                                     '-J' => '--jobname-only',
                                     };
   $optionContext->{'targets'}={};
   $optionContext->{'variant'}='pdflatex';
@@ -719,15 +721,14 @@ sub parseOptions {
   my ($optionContext,$desc,$options)=@_;
   my $localOptions={};
   my $index={};
-  my @option=@$options;
   &out(1,'init',"Treating $desc options");
   &out(2,'init',$options);
   my $x=0;
-  while ($x < scalar @option) {
-    my $arg=$option[$x];
+  while ($x < scalar @$options) {
+    my $arg=$options->[$x];
     if ($arg =~ /^-([A-Za-z][A-Za-z]+)$/) {
       my @singleoptions=map {"-$_"} split(//,$1);
-      splice @option,$x,1,@singleoptions;
+      splice $options,$x,1,@singleoptions;
       redo;
     }
     if (defined($optionContext->{'optionAliases'}->{$arg})) {
@@ -738,8 +739,8 @@ sub parseOptions {
     }
     if ($arg eq '--') {
       $x++;
-      while (defined($option[$x])) {
-        $optionContext->{'includedFiles'}->{$option[$x]}=1;
+      while (defined($options->[$x])) {
+        $optionContext->{'includedFiles'}->{$options->[$x]}=1;
         $x++;
       }
     } elsif ($arg eq '--help-action') {
@@ -749,21 +750,21 @@ sub parseOptions {
       &checkOptionArg($optionContext,$x++,$options,'availableActions','actions');
     } elsif ($arg =~ '--(\w+)' and defined($optionContext->{'verbosity'}->{$1})) {
       my $cat=$1;
-      my $level=$option[++$x];
+      my $level=$options->[++$x];
       &finish(1,"Wrong option: --$cat must be followed by an integer") unless $level =~ /^[0-9]+$/;
       $optionContext->{'verbosity'}->{$cat}=$level;
     } elsif ($arg eq '--verbosity') {
-      &finish(1,"Wrong option: --verbosity must be followed by two arguments") unless defined($option[$x+2]);
+      &finish(1,"Wrong option: --verbosity must be followed by two arguments") unless defined($options->[$x+2]);
       my $cat=&checkOptionArg($optionContext,$x++,$options,'verbosity');
-      my $level=$option[++$x];
+      my $level=$options->[++$x];
       &finish(1,"Wrong option: --verbosity must be followed by a category and an integer") unless $level =~ /^[0-9]+$/;
       $optionContext->{'verbosity'}->{$cat}=$level;
     } elsif ($arg eq '--variant') {
       &checkOptionArg($localOptions,$x++,$options,'availableVariants');
-      $localOptions->{'variant'}=$option[$x];
+      $localOptions->{'variant'}=$options->[$x];
     } elsif ($arg eq '--clean-mode') {
       &checkOptionArg($localOptions,$x++,$options,'availableClean');
-      $optionContext->{'cleanMode'}=$option[$x];
+      $optionContext->{'cleanMode'}=$options->[$x];
     } elsif ($arg eq '--no-chdir') {
       $localOptions->{'chdir'}=0;
     } elsif ($arg eq '--chdir') {
@@ -831,9 +832,11 @@ sub parseOptions {
       &checkOptionArg($localOptions,$x++,$options,undef,'assume-intermediary');
     } elsif ($arg eq '--assume-out') {
       &checkOptionArg($localOptions,$x++,$options,undef,'assume-out');
-    } elsif ($arg eq '--jobname-only') {
-      &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
-    } elsif ($arg eq '--jobname') {
+    } elsif ($arg eq '--jobname' or $arg eq '--jobname-only') {
+      if ($arg eq '--jobname-only') {
+        &checkOptionArg($localOptions,$x++,$options,undef,'jobnameOnly');
+        $x--;
+      }
       my $jobname=&checkOptionArg(undef,$x++,$options);
       $index=&finishIndex($localOptions,$index);
       my $lo=$localOptions;
@@ -1404,6 +1407,9 @@ sub processJob {
   }
   &out(3,'init','At the end of the job selection');
   &out(3,'init',$env);
+  if ($jobname eq '__auto__') {
+    $jobname=$env->{'defaultjobname'};
+  }
   if (scalar keys %{$env->{'jobnameOnly'}}) {
     if (!defined($env->{'jobnameOnly'}->{$jobname})) {
       &out(1,'init',"Skipping $jobname");
