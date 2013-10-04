@@ -21,7 +21,6 @@ End of synopsis
 =cut
 
 }
-
 if ('' cmp 'DOC PRINCIPLE') {
 
 =pod
@@ -218,7 +217,6 @@ the BibTeX executable. Default is just C<bibtex>.
 =cut
 
 }
-
 
 use strict;use warnings;
 # Unicode safety
@@ -665,8 +663,14 @@ sub initOptions {
        '--man' => [ '--help-action', 'man' ],
        '--nroff' => [ '--help-action', 'nroff' ],
        '--distclean' => [ '--clean-mode','all','--action','clean' ],
+       '-D' => [ '--clean-mode','all','--action','clean' ],
        '--clean' => [ '--action','clean' ],
+       '-C' => [ '--action','clean' ],
+       '--ignore' => [ '--action','gitignore' ],
+       '-I' => [ '--action','gitignore' ],
        '--build' => [ '--action','build' ],
+       '-B' => [ '--action','build' ],
+       '-f' => [ '--filter' ],
        '--index' => [  '--index-input-suffix', '.idx' , '--index-output-suffix', '.ind' ],
       };
   $optionContext->{'optionAliases'}={
@@ -721,6 +725,11 @@ sub parseOptions {
   my $x=0;
   while ($x < scalar @option) {
     my $arg=$option[$x];
+    if ($arg =~ /^-([A-Za-z][A-Za-z]+)$/) {
+      my @singleoptions=map {"-$_"} split(//,$1);
+      splice @option,$x,1,@singleoptions;
+      redo;
+    }
     if (defined($optionContext->{'optionAliases'}->{$arg})) {
       $arg=$optionContext->{'optionAliases'}->{$arg};
     }
