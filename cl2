@@ -100,7 +100,8 @@ action_name>, the name being one of:
 =item * B<in>, B<out>, B<intermediary>, B<ignore> list files matching
 the action name.
 
-=item * B<gitignore> outputs a C<.gitignore> file for all generated files.
+=item * B<autoignore> outputs a C<.gitignore> file or a C<svn propedit
+svn:ignore> command for all generated files.
 
 =item * B<cli> (experimental) returns a command-line doing exactly the
 same thing as the current command line.
@@ -127,9 +128,9 @@ required. Remark that this list is guaranteed to be correct only if a
 successful compilation took place (with B<build> action, either in the
 same run or in previous run).
 
-The B<gitignore> action will generate a C<.gitignore> file for all
-generated files. As above, this list will be correct only if made after
-a successful build.
+The B<autoignore> action will generate a C<.gitignore> file or a C<svn
+propedit svn:ignore> command for all generated files. As above, this
+list will be correct only if made after a successful build.
 
 =head2 ANTICIPATING INPUTS AND OUTPUTS
 
@@ -225,6 +226,7 @@ use JSON::PP;use Data::Dumper;
 use Digest::MD5;
 use Term::ANSIColor;
 use File::Path qw(make_path remove_tree);use Cwd qw(getcwd realpath);
+use File::Basename;
 # command execution
 use Symbol 'gensym';use IPC::Open3;
 use POSIX qw(:sys_wait_h dup dup2);use IO::Select;use IO::Handle;
@@ -296,17 +298,32 @@ sub main {
       }
     }
   }
-  if (defined($optionContext->{'actions'}->{'gitignore'})) {
-    foreach my $key (sort keys %{$progContext->{'gitignore'}}) {
-      my $data='/'.join("\n/",sort keys %{$progContext->{'gitignore'}->{$key}});
-      &outputSection('.gitignore',"compile-latex:$key",$data);
+  if (defined($optionContext->{'actions'}->{'autoignore'})) {
+    my $path=&realpath(&getcwd());
+    my $top=0;
+    my $found=0;
+    my $svn=0;
+    my $git=0;
+    while (!$top && !$found) {
+      $top=1 if ($path =~ m|^/$|);
+      if (-d File::Spec->catdir($path,'.git')) {
+        $git=1;
+        $found=1;
+      }
+      $path=&dirname($path) unless ($found);
+    }
+    if ($git) {
+      foreach my $key (sort keys %{$progContext->{'autoignore'}}) {
+        my $data='/'.join("\n/",sort keys %{$progContext->{'autoignore'}->{$key}});
+        &outputSection('.gitignore',"compile-latex:$key",$data);
+      }
     }
   }
   if (defined($optionContext->{'actions'}->{'clean'})) {
     my $mode=$optionContext->{'cleanMode'};
     my $removed=0;
-    foreach my $key (sort keys %{$progContext->{'gitignore'}}) {
-      foreach my $file (sort keys %{$progContext->{'gitignore'}->{$key}}) {
+    foreach my $key (sort keys %{$progContext->{'autoignore'}}) {
+      foreach my $file (sort keys %{$progContext->{'autoignore'}->{$key}}) {
         if (($mode eq 'simple' or $mode eq 'all') and
             !defined($progContext->{'latexresult'}->{$file}) and
             !defined($progContext->{'metadirs'}->{$file})
@@ -629,7 +646,7 @@ sub initOptions {
                                         'clean' => 1,
                                         'build' => 1,
                                         'cli' => 1,
-                                        'gitignore' => 1,
+                                        'autoignore' => 1,
                                        };
   $optionContext->{'availableClean'}={
                                       'all' => 1,
@@ -666,8 +683,8 @@ sub initOptions {
        '-D' => [ '--clean-mode','all','--action','clean' ],
        '--clean' => [ '--action','clean' ],
        '-C' => [ '--action','clean' ],
-       '--ignore' => [ '--action','gitignore' ],
-       '-I' => [ '--action','gitignore' ],
+       '--ignore' => [ '--action','autoignore' ],
+       '-I' => [ '--action','autoignore' ],
        '--build' => [ '--action','build' ],
        '-B' => [ '--action','build' ],
        '-f' => [ '--filter' ],
@@ -1461,7 +1478,7 @@ sub processJob {
       defined($env->{'actions'}->{'intermediary'}) or
       defined($env->{'actions'}->{'ignore'}) or
       defined($env->{'actions'}->{'clean'}) or
-      defined($env->{'actions'}->{'gitignore'})
+      defined($env->{'actions'}->{'autoignore'})
      ) {
     my $array={'in'=>{},'out'=>{},'intermediary'=>{},'ignore'=>{}};
     foreach my $plankey ('pre','run','post') {
@@ -1480,15 +1497,15 @@ sub processJob {
     &collapseArrays($array);
     my $xresult=(keys %{$array->{'result'}})[0];
     if (defined($env->{'actions'}->{'clean'}) or
-        defined($env->{'actions'}->{'gitignore'})
+        defined($env->{'actions'}->{'autoignore'})
        ) {
       my $kkey=$env->{'fulltexsource'};
       $kkey.="/$jobname" if ($jobname ne $env->{'defaultjobname'});
-      if (!defined($progContext->{'gitignore'}->{$kkey})) {
-        $progContext->{'gitignore'}->{$kkey}={};
+      if (!defined($progContext->{'autoignore'}->{$kkey})) {
+        $progContext->{'autoignore'}->{$kkey}={};
       }
       foreach my $i ('out','intermediary','ignore') {
-        &addHashInPlace($progContext->{'gitignore'}->{$kkey},$array->{$i});
+        &addHashInPlace($progContext->{'autoignore'}->{$kkey},$array->{$i});
       }
       my $output=$env->{'outputFile'};
       $progContext->{'latexresult'}->{$xresult}=1;
@@ -1582,6 +1599,7 @@ sub buildLatex {
     $env->{'latexname'}='pdflatex';
     $env->{'dviname'}='';
     $env->{'outputFile'}=$env->{'stem'}.'.pdf';
+    $env->{'pdfstamp'}=1;
   } elsif ($p eq 'dvips' or $p eq 'dvips+latex' or $p eq 'dvips+tex') {
     $env->{'dvicallback'}='dvipsCallback';
     $env->{'latexname'}='latex';
@@ -1951,23 +1969,30 @@ sub latexCallback {
   if ($status) {
     &finish(1,"TeX failed with status $status");
   }
+  if (exists($env->{'pdfstamp'})) {
+    &pdfstamp($env);
+  }
   # Reevaluate inputs and outputs
   my ($out,$in,$intermediary,$pwd)=({},{},{},undef);
   open FILE,$env->{'stem'}.".fls" or die 'Input/output list was not generated!';
   my $line;
   while ($line=<FILE>) {
-    chomp $line; 
+    chomp $line;
     if ($line=~/^INPUT (.*)$/) {
-      if (defined $out->{$1}) {
-        $intermediary->{$1}=1;
+      my $inf = $1;
+      $inf =~ s|^[.]/||g;
+      if (defined $out->{$inf}) {
+        $intermediary->{$inf}=1;
       } else {
-        $in->{$1}=1;
+        $in->{$inf}=1;
       }
     } elsif ($line=~/^OUTPUT (.*)$/) {
-      if (defined $in->{$1}) {
-        $intermediary->{$1}=1;
+      my $outf = $1;
+      $outf =~ s|^[.]/||g;
+      if (defined $in->{$outf}) {
+        $intermediary->{$outf}=1;
       } else {
-        $out->{$1}=1;
+        $out->{$outf}=1;
       }
     } elsif ($line=~/^PWD (.*)$/) {
       $pwd=$1;
@@ -2023,6 +2048,49 @@ sub dvipsCallback {
   $part->{'fingerprint-in'}=&fingerprintArrayRetrofit($part,'in',$env,$part->{'fingerprint-in'});
   $part->{'fingerprint-intermediary'}=&fingerprintArrayRetrofit($part,'intermediary',$env,$part->{'fingerprint-intermediary'});
   return 0;
+}
+sub pdfstamp {
+  my $env = shift @_;
+  my $filename = File::Spec->catfile($env->{'meta'},"temp.pdf");
+  my $fh;
+  if (!open $fh,'>',$filename) {
+    &out(1,'err',"Could not open a temporary pdf");
+    return;
+  }
+  $progContext->{'tmpfiles'}->{$filename}=1;
+  my $hashing = Digest::MD5->new;
+  my $target = $env->{'outputFile'};
+  my $filepdf;
+  open $filepdf,$target;
+  binmode($fh);
+  binmode($filepdf);
+  my $file='';
+  while (my $line=<$filepdf>) {
+    if ($line =~ /^\s*\/ID\s*\[<([a-fA-F0-9]{32})>\s+<([a-fA-F0-9]{32})>\]/) {
+      my ($a,$b)=($1,$2);
+      $line =~ s/$a/00000000000000000000000000000000/g;
+      $line =~ s/$b/00000000000000000000000000000000/g unless $a eq $b;
+    }
+    if ($line =~ /^\s*\/[MCreationd]+Date\s*\(D:([-+'0-9]+)\)/) {
+      my $date=$1;
+      $line =~ s/\(D:[-+'0-9]+\)/(D:19700101000000+00'00')/g;
+    }
+    print $fh $line;
+    $hashing->add($line);
+  }
+  close $filepdf;
+  close $fh;
+  my $sum=$hashing->hexdigest;
+  open $fh,$filename;
+  open $filepdf,">$target";
+  while (my $line=<$fh>) {
+    if ($line =~ /^\/ID\s+\[<00000000000000000000000000000000>\s+<00000000000000000000000000000000>\]/) {
+      $line =~ s/00000000000000000000000000000000/$sum/g;
+    }
+    print $filepdf $line;
+  }
+  close $fh;
+  close $filepdf;
 }
 
 sub savePlanPart {
@@ -2110,6 +2178,20 @@ here that the license does not extend to the data managed by the
 program, in case anyone had doubts.
 
 =head1 TODO
+
+Meddle with crossref stream and info stream to ensure that the
+compilation is idempotent: replace the CreationDate
+(D:20131022084903+02'00') and ModDate (D:20131022084903+02'00') metadata
+by some unique value (1970?) and the ID
+[<4F5C63570870A7B398FF0B85E5A17749> <4F5C63570870A7B398FF0B85E5A17749>]
+by something that comes from md5+filesize (without path). Name this
+option --tardis.
+
+Fix dependencies and bibtex.
+
+Fix Makefile snippets generation. Preference goes to building makefiles
+that compile from uncompiled state by chaining the correct number of
+executions, but could also generate something that uses cl2.
 
 Shorthands for useful options.
 

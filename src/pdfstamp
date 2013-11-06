@@ -1,0 +1,195 @@
+#!/usr/bin/perl
+
+# TODO
+# Check that a file is a pdf before treating it
+# allow a --time string argument
+# allow a --default-time argument
+# Really read and interpret the PDF structure
+
+use strict;use warnings;
+use Digest::MD5;
+use Symbol 'gensym';use IPC::Open3;
+use POSIX qw(:sys_wait_h dup dup2);
+use File::Temp qw/ tempfile tempdir /;
+
+my $context={};
+
+if ('' cmp 'DOC SYNOPSIS') {
+
+=pod
+
+=head1 NAME
+
+pdfstamp - changes date info and ID so that identical PDF are truly identical
+
+=head1 SYNOPSIS
+
+pdfstamp B<--help>|B<--man>|B<--nroff>|B<--usage>
+
+pdfstamp I<file>
+
+End of synopsis
+
+=cut
+
+}
+
+sub executeCommand {
+  # a much simpler version for the manual page
+  my $in=shift @_;
+  my $outputtext='';
+  my $errtext='';
+  my $handler=undef;
+  $handler=$SIG{CHLD} if defined($SIG{CHLD});
+  $SIG{CHLD} = sub {} ;
+  my $pid=open3(\*INPUT, \*OUTPUT, \*ERR,@_);
+  print INPUT $in if $in;
+  close(INPUT);
+  my $done=0;
+  do {
+    while (<OUTPUT>) {
+      $outputtext.=$_;
+    }
+    while (<ERR>) {
+      $errtext.=$_;
+    }
+    $done=waitpid($pid,WNOHANG);
+  } until ($done>0);
+  $SIG{CHLD}=$handler if $handler;
+  return [ $?, $outputtext, $errtext ];
+}
+sub usage {
+
+=pod
+
+=head2 HELP OPTIONS
+
+B<--help>|B<-h> Generate this help (long version).
+
+B<--usage> Generate this help (short version).
+
+B<--man> Generate man page.
+
+B<--nroff> Generate man page in NROFF format.
+
+=cut
+
+  ### usage ($option)
+  ### Provides all kinds of textual help and stops
+  my ($options)=@_;
+  my $option=(sort keys %$options)[0];
+  if (!defined($option)) {
+    $option='usage';
+  }
+  my $cmd='pod2txt';
+  my $release="0.6";
+  my ($a,$out,$b);
+  if ($option eq 'man'||$option eq 'nroff') {
+    ($a,$out,$b)=@{&executeCommand('','pod2man',"$0",'--center','User commands','--release',$release)};
+    if ($a==0 && $option eq 'man') {
+      $out =~ s/\n.PP\n[^\n]*End of synopsis[^\n]*\n/\n/s;
+      ($a,$out,$b)=@{&executeCommand($out,'nroff','-man','-')};
+    }
+  } else {
+    ($a,$out,$b)=@{&executeCommand('','pod2text',"$0")};
+  }
+  if ($option eq 'usage') {
+    $out =~ s/\n\s*End of synopsis.*$/\n/s;
+  } elsif ($option eq 'help') {
+    $out =~ s/\n\n[^\n]*End of synopsis[^\n]*\n/\n\nFor a more readable version of this text, use option --man.\n/s;
+  } else {
+    $out =~ s/\n.PP\n[^\n]*End of synopsis[^\n]*\n/\n/s;
+  }
+  if ($option ne 'man') {
+    print $out;
+  } else {
+    open FILE,"|pager";
+    print FILE $out;
+    close FILE;
+  }
+  &finish(0);
+}
+sub finish {
+  my $status=shift @_;
+  if ($status) {
+    print "Dying: ",@_,"\n";
+  }
+  foreach my $key (keys %{$context->{'tmpfiles'}}) {
+    unlink($key);
+  }
+  exit($status);
+}
+sub parseARGV {
+  my @options=@ARGV;
+  while (@options) {
+    my $opt=shift @options;
+    if ($opt eq '--help' or $opt eq '-h') {
+      $context->{'help'}->{'help'}=1;
+    } elsif ($opt eq '--man') {
+      $context->{'help'}->{'man'}=1;
+    } elsif ($opt eq '--nroff') {
+      $context->{'help'}->{'nroff'}=1;
+    } elsif ($opt eq '--usage') {
+      $context->{'help'}->{'usage'}=1;
+    } elsif ($opt eq '--') {
+      foreach my $x (@options) {
+        $context->{'targets'}->{$x}=1;
+      }
+      @options=();
+    } else {
+      $context->{'targets'}->{$opt}=1;
+    }
+  }
+}
+sub pdfstamp {
+  my ($fh, $filename) = tempfile();
+  $context->{'tmpfiles'}->{$filename}=1;
+  my $hashing = Digest::MD5->new;
+  my $target = shift @_;
+  my $filepdf;
+  open $filepdf,$target;
+  binmode($fh);
+  binmode($filepdf);
+  my $file='';
+  while (my $line=<$filepdf>) {
+    if ($line =~ /^\s*\/ID\s*\[<([a-fA-F0-9]{32})>\s+<([a-fA-F0-9]{32})>\]/) {
+      my ($a,$b)=($1,$2);
+      $line =~ s/$a/00000000000000000000000000000000/g;
+      $line =~ s/$b/00000000000000000000000000000000/g unless $a eq $b;
+    }
+    if ($line =~ /^\s*\/[MCreationd]+Date\s*\(D:([-+'0-9]+)\)/) {
+      my $date=$1;
+      $line =~ s/\(D:[-+'0-9]+\)/(D:19700101000000+00'00')/g;
+    }
+    print $fh $line;
+    $hashing->add($line);
+  }
+  close $filepdf;
+  close $fh;
+  my $sum=$hashing->hexdigest;
+  open $fh,$filename;
+  open $filepdf,">$target";
+  while (my $line=<$fh>) {
+    if ($line =~ /^\/ID\s+\[<00000000000000000000000000000000>\s+<00000000000000000000000000000000>\]/) {
+      $line =~ s/00000000000000000000000000000000/$sum/g;
+    }
+    print $filepdf $line;
+  }
+  close $fh;
+  close $filepdf;
+}
+sub main {
+  &parseARGV();
+  if (defined($context->{'help'})) {
+    &usage($context->{'help'});
+  }
+  if (!defined($context->{'targets'})) {
+    &finish(1,'No targets specified');
+  }
+  foreach my $file (keys %{$context->{'targets'}}) {
+    &pdfstamp($file);
+  }
+  &finish(0);
+}
+
+&main();
